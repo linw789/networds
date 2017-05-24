@@ -1,0 +1,16 @@
+{
+
+"networds" : [
+    {
+        "wkey" : "antithetical",
+        "relatives" : ["opposite"],
+        "visited" : 1
+    },
+    {
+        "wkey" : "chicanery",
+        "relateives" : [],
+        "visited" : 1
+    }
+]
+
+}
