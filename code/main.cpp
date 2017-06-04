@@ -59,11 +59,6 @@ int main(int argc, char *argv)
     NetwordsTests::run_tests();
 #endif
 
-    strpool astrpool;
-    strpool_init(&astrpool, 1000, 100, 30);
-
-    strpool_get_handle(&astrpool, "whatever", lt_str_length("whatever"));
-
     char pause = getchar();
     return 0;
 }
