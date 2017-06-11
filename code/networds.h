@@ -677,7 +677,7 @@ const char *strpool_get_string(strpool *pool, strpool_handle handle)
     Networds app
 ====================*/
 
-struct NetWord
+struct netword_t
 {
     strpool_handle this_word;
     int related_words_count;
@@ -686,20 +686,20 @@ struct NetWord
     int visits;
 };
 
-struct NetWordPool
+struct networdpool_t
 {
-    NetWord *words;
-    int words_count;
-    int pool_capacity;
+    netword_t *words = 0;
+    int words_count = 0;
+    int pool_capacity = 0;
 };
 
-NetWord *nw_make_word(NetWordPool *wordspool, const char *word, int word_length, strpool *stringpool)
+netword_t *nw_make_word(networdpool_t *wordspool, const char *word, int word_length, strpool *stringpool)
 {
     if (wordspool->words_count > wordspool->pool_capacity)
     {
         // TODO: inscreen wordspool capacity
     }
-    NetWord *result = &wordspool->words[wordspool->words_count++];
+    netword_t *result = &wordspool->words[wordspool->words_count++];
     result->this_word = strpool_get_handle(stringpool, word, word_length);
 
     result->related_words_count = 0;
@@ -710,7 +710,7 @@ NetWord *nw_make_word(NetWordPool *wordspool, const char *word, int word_length,
     return result;
 }
 
-void nw_add_related_word(NetWord *word, const char *related_word, int related_word_length, strpool *stringpool)
+void nw_add_related_word(netword_t *word, const char *related_word, int related_word_length, strpool *stringpool)
 {
     if (word->related_words_count > word->related_words_capacity)
     {
@@ -719,7 +719,7 @@ void nw_add_related_word(NetWord *word, const char *related_word, int related_wo
     word->related_words[word->related_words_count++] = strpool_get_handle(stringpool, related_word, related_word_length);
 }
 
-int nw_add_related_words(NetWord *word, char *new_relative)
+int nw_add_related_words(netword_t *word, char *new_relative)
 {
     //int new_relative_length = lt_str_length(new_relative);
 
@@ -760,10 +760,11 @@ const char *nw_json_error(const char *errmsg)
     static const size_t error_msg_size = 256;
     static char error_msg[error_msg_size];
     lt_str_ncopy(error_msg, error_msg_size, errmsg);
+    assert(false);
     return error_msg;
 };
 
-char nw_json_next_char(const char *str, size_t &pos)
+char nw_next_nonwhitespace(const char *str, size_t &pos)
 {
     char c = *(str + pos);
     while (c == ' ' || c == '\n' || c == '\t' || c == '\r' || c == '\v')
@@ -864,7 +865,7 @@ const uint32_t json_collection_type_object = 1;
 /**
  * Maximum collection depth is 32.
  */
-int nw_json_read(const char *json_str, size_t json_str_length, NetWordPool *wordspool, strpool *stringpool)
+int nw_json_read(const char *json_str, size_t json_str_length, networdpool_t *wordspool, strpool *stringpool)
 {
     if (json_str == 0 || json_str_length == 0)
     {
@@ -877,15 +878,15 @@ int nw_json_read(const char *json_str, size_t json_str_length, NetWordPool *word
     uint32_t collection_types[32];
 
     size_t json_str_pos = 0;
-    char next_char = nw_json_next_char(json_str, json_str_pos);
+    char next_char = nw_next_nonwhitespace(json_str, json_str_pos);
     if (next_char != '[')
     {
         nw_json_error("The first non-whilespace character has to be \'[\'!");
     }
     collection_depth = 1;
     collection_types[collection_depth - 1] = json_collection_type_array;
-    next_char = nw_json_next_char(json_str, json_str_pos);
-    NetWord *current_word = 0;
+    next_char = nw_next_nonwhitespace(json_str, json_str_pos);
+    netword_t *current_word = 0;
 
     while (json_str_pos <= json_str_length)
     {
@@ -951,7 +952,7 @@ int nw_json_read(const char *json_str, size_t json_str_length, NetWordPool *word
 
         parsing_next_key_pair:
 
-        next_char = nw_json_next_char(json_str, json_str_pos);
+        next_char = nw_next_nonwhitespace(json_str, json_str_pos);
         if (next_char != '\"')
         {
             nw_json_error("Non-conforming JSON file, expecting \'\"\'!");
@@ -960,12 +961,12 @@ int nw_json_read(const char *json_str, size_t json_str_length, NetWordPool *word
         if (lt_str_ncompare(json_str + json_str_pos, "word\"", 5) == 0)
         {
             json_str_pos += 5;
-            next_char = nw_json_next_char(json_str, json_str_pos);
+            next_char = nw_next_nonwhitespace(json_str, json_str_pos);
             if (next_char != ':')
             {
                 nw_json_error("Non-conforming JSON file, expecting \':\'!");
             }
-            next_char = nw_json_next_char(json_str, json_str_pos);
+            next_char = nw_next_nonwhitespace(json_str, json_str_pos);
             if (next_char != '\"')
             {
                 nw_json_error("Non-conforming JSON file, expecting \'\"\'!");
@@ -978,32 +979,32 @@ int nw_json_read(const char *json_str, size_t json_str_length, NetWordPool *word
         else if (lt_str_ncompare(json_str + json_str_pos, "relatives\"", 10) == 0)
         {
             json_str_pos += 10;
-            next_char = nw_json_next_char(json_str, json_str_pos);
+            next_char = nw_next_nonwhitespace(json_str, json_str_pos);
             if (next_char != ':')
             {
                 nw_json_error("Non-conforming JSON file, expecting \':\'!");
             }
-            next_char = nw_json_next_char(json_str, json_str_pos);
+            next_char = nw_next_nonwhitespace(json_str, json_str_pos);
             if (next_char != '[')
             {
                 nw_json_error("Expecting \'[\' for an array of related words!");
             }
             collection_depth += 1;
             collection_types[collection_depth - 1] = json_collection_type_array;
-            next_char = nw_json_next_char(json_str, json_str_pos);
+            next_char = nw_next_nonwhitespace(json_str, json_str_pos);
             while (next_char == '\"')
             {
                 const char *new_word = json_str + json_str_pos;
                 int new_word_length = nw_json_skip_string(json_str, json_str_pos);
                 nw_add_related_word(current_word, new_word, new_word_length, stringpool);
-                next_char = nw_json_next_char(json_str, json_str_pos);
+                next_char = nw_next_nonwhitespace(json_str, json_str_pos);
                 if (next_char != ',')
                 {
                     break;
                 }
                 else
                 {
-                    next_char = nw_json_next_char(json_str, json_str_pos);
+                    next_char = nw_next_nonwhitespace(json_str, json_str_pos);
                 }
             }
             if (next_char != ']')
@@ -1019,7 +1020,7 @@ int nw_json_read(const char *json_str, size_t json_str_length, NetWordPool *word
         else if (lt_str_ncompare(json_str + json_str_pos, "visits\"", 7) == 0)
         {
             json_str_pos += 7;
-            next_char = nw_json_next_char(json_str, json_str_pos);
+            next_char = nw_next_nonwhitespace(json_str, json_str_pos);
             if (next_char != ':')
             {
                 nw_json_error("Non-conforming JSON file, expecting \':\'!");
@@ -1035,7 +1036,7 @@ int nw_json_read(const char *json_str, size_t json_str_length, NetWordPool *word
 
         parsing_next_character:
 
-        next_char = nw_json_next_char(json_str, json_str_pos);
+		next_char = nw_next_nonwhitespace(json_str, json_str_pos);
     }
 
     parsing_finished:
@@ -1043,9 +1044,299 @@ int nw_json_read(const char *json_str, size_t json_str_length, NetWordPool *word
 	return 0;
 }
 
-void nw_json_write(NetWord *networds, int count, const char *target_filename)
+void nw_json_write_whitespaces(char *json_buffer, size_t &json_buffer_pos, int whitespace_count)
 {
+    while (whitespace_count > 0)
+    {
+        json_buffer[json_buffer_pos] = ' ';
+        json_buffer_pos++;
+        whitespace_count--;
+    }
+}
 
+void nw_json_write_string(char *json_buffer, size_t &json_buffer_pos, const char *string, int string_length)
+{
+    json_buffer[json_buffer_pos++] = '\"';
+    for (int i = 0; i < string_length; ++i)
+    {
+        json_buffer[json_buffer_pos++] = string[i];
+    }
+    json_buffer[json_buffer_pos++] = '\"';
+}
+
+void nw_json_write_int32(char *json_buffer, size_t &json_buffer_pos, int n)
+{
+    static const int MaxDigitCount = 16;
+    static char number[MaxDigitCount];
+
+    int sign = (n >= 0 ? 1 : -1);
+    n *= sign;
+    int digit_pos = MaxDigitCount - 1;
+    do
+    {
+        int d = n % 10;
+        number[digit_pos] = '0' + d;
+        digit_pos--;
+        n /= 10;
+    } while (n > 0);
+    if (sign == -1)
+    {
+        json_buffer[json_buffer_pos++] = '-';
+    }
+    while (++digit_pos < MaxDigitCount)
+    {
+        json_buffer[json_buffer_pos++] = number[digit_pos];
+    }
+}
+
+void nw_json_write(networdpool_t *wordspool, char *json_buffer, size_t json_buffer_size, strpool *stringpool)
+{
+    static const char key_str_word[5] = "word";
+    static const char key_str_relatives[10] = "relatives";
+    static const char key_str_visits[7] = "visits";
+
+    size_t json_buffer_pos = 0;
+    json_buffer[json_buffer_pos++] = '[';
+    json_buffer[json_buffer_pos++] = '\n';
+
+    for (int i_word = 0; i_word < wordspool->words_count; ++i_word)
+    {
+        netword_t *netword = &wordspool->words[i_word];
+
+        nw_json_write_whitespaces(json_buffer, json_buffer_pos, 4);
+        json_buffer[json_buffer_pos++] = '{';
+        json_buffer[json_buffer_pos++] = '\n';
+
+        nw_json_write_whitespaces(json_buffer, json_buffer_pos, 8);
+        nw_json_write_string(json_buffer, json_buffer_pos, key_str_word, lt_str_length(key_str_word));
+        json_buffer[json_buffer_pos++] = ' ';
+        json_buffer[json_buffer_pos++] = ':';
+        json_buffer[json_buffer_pos++] = ' ';
+        const char *word = strpool_get_string(stringpool, netword->this_word);
+        nw_json_write_string(json_buffer, json_buffer_pos, word, lt_str_length(word));
+        json_buffer[json_buffer_pos++] = ',';
+        json_buffer[json_buffer_pos++] = '\n';
+
+        nw_json_write_whitespaces(json_buffer, json_buffer_pos, 8);
+        nw_json_write_string(json_buffer, json_buffer_pos, key_str_relatives, lt_str_length(key_str_relatives));
+        json_buffer[json_buffer_pos++] = ' ';
+        json_buffer[json_buffer_pos++] = ':';
+        json_buffer[json_buffer_pos++] = ' ';
+        json_buffer[json_buffer_pos++] = '[';
+        for (int j = 0; j < netword->related_words_count; ++j)
+        {
+            word = strpool_get_string(stringpool, netword->related_words[j]);
+            nw_json_write_string(json_buffer, json_buffer_pos, word, lt_str_length(word));
+            if (j < netword->related_words_count - 1)
+            {
+                json_buffer[json_buffer_pos++] = ',';
+                json_buffer[json_buffer_pos++] = ' ';
+            }
+        }
+        json_buffer[json_buffer_pos++] = ']';
+        json_buffer[json_buffer_pos++] = ',';
+        json_buffer[json_buffer_pos++] = '\n';
+
+        nw_json_write_whitespaces(json_buffer, json_buffer_pos, 8);
+        nw_json_write_string(json_buffer, json_buffer_pos, key_str_visits, lt_str_length(key_str_visits));
+        json_buffer[json_buffer_pos++] = ' ';
+        json_buffer[json_buffer_pos++] = ':';
+        json_buffer[json_buffer_pos++] = ' ';
+        nw_json_write_int32(json_buffer, json_buffer_pos, netword->visits);
+        json_buffer[json_buffer_pos++] = '\n';
+
+        nw_json_write_whitespaces(json_buffer, json_buffer_pos, 4);
+        json_buffer[json_buffer_pos++] = '}';
+
+        if (i_word < wordspool->words_count - 1)
+        {
+            json_buffer[json_buffer_pos++] = ',';
+        }
+        json_buffer[json_buffer_pos++] = '\n';
+    }
+
+    json_buffer[json_buffer_pos++] = ']';
+    json_buffer[json_buffer_pos++] = '\0';
+
+    assert(json_buffer_pos < json_buffer_size);
+}
+
+
+/*============================
+    Command Line Loop
+============================*/
+
+void nw_skip_whitespace(const char *cmdline, size_t &cmdline_pos)
+{
+    char c = *(cmdline + cmdline_pos);
+    while (c == ' ' || c == '\n' || c == '\t' || c == '\r' || c == '\v')
+    {
+        c = *(cmdline + (++cmdline_pos));
+    }
+    return;
+}
+
+struct nw_cmdl_tokens
+{
+    static const int MaxTokenNum = 128;
+    int token_num = 0;
+    int token_start_positions[MaxTokenNum];
+    int token_end_positions[MaxTokenNum];
+};
+
+enum nw_cmd_e
+{
+    cmd_unrecognized = 0,
+    cmd_exit = 1,
+    cmd_new = 2,
+    cmd_add = 3,
+    cmd_num = 4,
+};
+
+nw_cmd_e nw_cmdl_tokenize(const char *cmdline, int cmdline_length, nw_cmdl_tokens *tokens)
+{
+    nw_cmd_e nw_cmd = nw_cmd_e::cmd_unrecognized;
+	size_t cmdline_pos = 0;
+    if (lt_str_ncompare(cmdline, "exit", 4) == 0)
+    {
+        return nw_cmd_e::cmd_exit;
+    }
+    else if (lt_str_ncompare(cmdline, "nw ", 3) != 0)
+    {
+        return nw_cmd_e::cmd_unrecognized;
+    }
+    cmdline_pos += 3;
+    nw_skip_whitespace(cmdline, cmdline_pos);
+    if (lt_str_ncompare(cmdline + cmdline_pos, "new ", 4) == 0)
+    {
+        nw_cmd = nw_cmd_e::cmd_new;
+        cmdline_pos += 4;
+    }
+    else if (lt_str_ncompare(cmdline + cmdline_pos, "add ", 4) == 0)
+    {
+        nw_cmd = nw_cmd_e::cmd_add;
+        cmdline_pos += 4;
+    }
+    else if (lt_str_ncompare(cmdline + cmdline_pos, "num ", 4) == 0)
+    {
+        nw_cmd = nw_cmd_e::cmd_num;
+        cmdline_pos += 4;
+    }
+    else
+    {
+        return nw_cmd_e::cmd_unrecognized;
+    }
+    while(cmdline_pos < cmdline_length)
+    {
+        nw_skip_whitespace(cmdline, cmdline_pos);
+        tokens->token_start_positions[tokens->token_num] = (int)cmdline_pos - 1;
+        while (*(cmdline + cmdline_pos) != ',' && 
+               *(cmdline + cmdline_pos) != '\n' &&
+               cmdline_pos < cmdline_length)
+        {
+            cmdline_pos++;
+        }
+        tokens->token_end_positions[tokens->token_num] = (int)cmdline_pos - 1;
+        // trim whitespaces at end
+        while (*(cmdline + tokens->token_end_positions[tokens->token_num]) == ' ' ||
+               *(cmdline + tokens->token_end_positions[tokens->token_num]) == '\t' ||
+               *(cmdline + tokens->token_end_positions[tokens->token_num]) == '\r')
+        {
+            tokens->token_end_positions[tokens->token_num]--;
+        }
+        tokens->token_num++;
+    }
+	return nw_cmd;
+}
+
+/**
+ * Read all characters from \ref stream until it meets '\n', '\0' or EOF, or the 
+ * amount of characters read equals \ref max_line_length.
+ * This function doesn't guarantee \ref line will be null-terminated.
+ */
+int nw_cmd_readline(FILE *stream, char *line, int max_line_length)
+{
+    if (line == 0 || max_line_length <= 0)
+    {
+        return 0;
+    }
+    int count = 0;
+    while (count < max_line_length)
+    {
+        char c = getc(stream);
+        if (c == EOF)
+        {
+            if (count == 0)
+            {
+                return -1;
+            }
+            else
+            {
+                break;
+            }
+        }
+        line[count++] = c;
+        if (c == '\n' || c == '\0')
+        {
+            break;
+        }
+    }
+    return count;
+}
+
+void nw_cmdl_run()
+{
+    networdpool_t networdspool;
+    networdspool.pool_capacity = 
+
+    FILE *netword_json_file = 0;
+    fopen_s(&netword_json_file, "networds.json", "r");
+    if (netword_json_file)
+    {
+
+    }
+
+
+    nw_cmdl_tokens cmdl_tokens;
+    const int cmdline_max_length = 1024;
+    char cmdline[cmdline_max_length];
+    char cmdline_length = 0;
+
+    while (1)
+    {
+        cmdline_length = nw_cmd_readline(stdin, cmdline, cmdline_max_length);
+        nw_cmd_e nw_cmd = nw_cmdl_tokenize(cmdline, cmdline_length, &cmdl_tokens);
+
+        switch(nw_cmd)
+        {
+            case nw_cmd_e::cmd_exit:
+            {
+                return;
+            } break;
+
+            case nw_cmd_e::cmd_new:
+            {
+                printf("nw new ...\n");
+            } break;
+
+            case nw_cmd_e::cmd_add:
+            {
+                printf("nw add ...\n");
+            } break;
+
+            case nw_cmd_e::cmd_num:
+            {
+                printf("nw num ...\n");
+            } break;
+
+            case nw_cmd_e::cmd_unrecognized:
+            {
+                printf("unrecognized command.\n");
+            } break;
+        }
+
+        cmdl_tokens.token_num = 0;
+    }
 }
 
 
@@ -1182,6 +1473,27 @@ namespace NetwordsTests
         }
     }
 
+    void nw_json_write_int32_test()
+    {
+        char test_buffer[10];
+        size_t buffer_pos = 0;
+
+        nw_json_write_int32(test_buffer, buffer_pos, 0);
+        assert(lt_str_ncompare(test_buffer, "0", 1) == 0);
+        assert(buffer_pos == 1);
+        buffer_pos = 0;
+
+        nw_json_write_int32(test_buffer, buffer_pos, 123);
+        assert(lt_str_ncompare(test_buffer, "123", 3) == 0);
+        assert(buffer_pos == 3);
+        buffer_pos = 0;
+
+        nw_json_write_int32(test_buffer, buffer_pos, -87356);
+        assert(lt_str_ncompare(test_buffer, "-87356", 6) == 0);
+        assert(buffer_pos == 6);
+        buffer_pos = 0;
+    }
+
     struct foo
     {
 		int a;
@@ -1193,6 +1505,8 @@ namespace NetwordsTests
     {
 		next_pow2_input_zero_return_one();
 		memory_align_input_normal();
+        lt_str_ncompare_input_various();
+        nw_json_write_int32_test();
 
         strpool_init_input_normal_set_dummy_node();
         strpool_get_handle_input_normal_return_normal();
@@ -1200,6 +1514,6 @@ namespace NetwordsTests
         strpool_get_handle_input_multiple_strings_return_normal();
         strpool_get_handle_input_existing_string_same_hash_return_normal();
 
-        printf("size of foo: %d", (int32_t)sizeof(foo));
+        // printf("size of foo: %d", (int32_t)sizeof(foo));
     }
 }

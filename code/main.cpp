@@ -59,6 +59,7 @@ int main(int argc, char *argv)
     NetwordsTests::run_tests();
 #endif
 
+#if 1
     FILE *file = 0;
     fopen_s(&file, "test.json", "r");
     if (file)
@@ -78,21 +79,37 @@ int main(int argc, char *argv)
         }
         fclose(file);
 
-        NetWordPool wordspool;
+        networdpool_t wordspool;
         wordspool.words_count = 0;
         wordspool.pool_capacity = 10;
-        wordspool.words = (NetWord *)malloc(wordspool.pool_capacity * sizeof(NetWord));
+        wordspool.words = (netword_t *)malloc(wordspool.pool_capacity * sizeof(netword_t));
 
         strpool stringpool;
         strpool_init(&stringpool, 300, 20, 20);
 
         nw_json_read(test_json_str, file_read_length, &wordspool, &stringpool);
+
+        char json_write_buffer[buffersize];
+        nw_json_write(&wordspool, json_write_buffer, buffersize, &stringpool);
+
+        fopen_s(&file, "test00.json", "w");
+        if (file)
+        {
+            fprintf(file, json_write_buffer);
+        }
     }
     else
     {
         fprintf(stderr, "Failed to open file\n");
     }
+#endif
 
-    char pause = getchar();
+    "nw new [word|phrase], [related_word], [related_word], ...";
+    "nw add [word|phrase], [related_word], [related_word], ...";
+    "nw show [word|phrase]"
+    "exit";
+
+    nw_cmdl_run();
+
     return 0;
 }
