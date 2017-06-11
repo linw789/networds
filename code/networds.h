@@ -3,9 +3,14 @@
 todo
 [ ] : to start  [x] : complete  [i] : in progress  [w] : won't do
 
-[i] Parse JSON to netword structs in memory.
+[i] Write command line loop.
+[ ] Revise strpool_string_node structure and the way of finding next free node.
 [ ] Address reference counting issue of strpool_handle.
+[ ] Add memory footprint metrics.
+[ ] Make a simple stupid unit test framework that can save me from manually 
+    calling every test function.
 [i] Write unit tests for strpool.
+[x] Parse JSON to netword structs in memory.
 [x] Finish strpool_discard_handle function, take into account of ref_count.
 [x] Fix all lt_* functions.
 [x] Upload this project to Github.
@@ -26,6 +31,7 @@ todo
 
 /**
  * Compute the smallest power of 2 that's larger than or equal to x.
+ * reference: https://graphics.stanford.edu/~seander/bithacks.html#RoundUpPowerOf2
  */
 uint32_t next_pow2(uint32_t x)
 {
@@ -42,7 +48,6 @@ uint32_t next_pow2(uint32_t x)
 }
 
 /**
- * Could virtual memory address be larger than 2GB?
  * @param a The alignment must be power of 2
  */
 uint32_t memory_align(uint32_t memory, uint32_t a)
@@ -128,7 +133,6 @@ int lt_str_ncompare(const char *str0, const char *str1, size_t count)
         str1++;
         count--;
     }
-
     return 0;
 }
 
@@ -142,7 +146,7 @@ struct strpool_hashslot
     uint32_t string_hash;
     int32_t entry_index;
     // the number of times a string is originally hashed at this slot
-	int32_t base_count;
+    int32_t base_count;
 };
 
 /**
@@ -157,16 +161,13 @@ struct strpool_entry
         // memory offset of the actual string data in strpool.string_block, not 
         // including the strpool_string_node
         int32_t string_data_offset;
-
-        // used when the entry is free (not used)
+        // used when the entry is free
         int32_t prev_free_entry_index;
     };
-
     union
     {
         int32_t hashslot;
-
-        // used when the entry is free (not used)
+        // used when the entry is free
         int32_t next_free_entry_index;
     };
 
@@ -202,7 +203,7 @@ struct strpool_handle
  */
 struct strpool_string_node
 {
-    // memory offset of strpoo_string_node in strpool.string_block 
+    // memory offset of strpool_string_node in strpool.string_block 
     int32_t prev_node_offset;
     int32_t next_node_offset;
 
@@ -227,11 +228,11 @@ struct strpool
     strpool_entry *entries;
 
     // Memory block storing all strings. Each string must be appended with '\0', 
-    // and prepended with a uint32_t hash and a uint32_t string length.
+    // and prepended with a strpool_string_node.
     char *string_block;
     int32_t string_block_size;
 
-    // dummy node servers as head and tail for a circular linked list, it's always 0
+    // dummy node serves as head and tail for a circular linked list, it's always 0
     int32_t dummy_node_offset;
 
     // dummy free entry, always 0
