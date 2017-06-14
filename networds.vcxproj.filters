@@ -18,54 +18,9 @@
     <ClCompile Include="code\main.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="code\lt\lt_file.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="code\lt\lt_math.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="code\lt\lt_string.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="code\lt\lt_json.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="code\lt\lt_geometry.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="code\lt\lt_file.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="code\lt\lt_json.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="code\lt\lt_math.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="code\lt\lt_platform.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="code\lt\lt_string.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="code\lt\lt_tests.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="code\lt\lt_win64.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="code\lt\lt_geometry.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
     <ClInclude Include="code\networds.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="code\strpool.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="code\networds_tests.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>

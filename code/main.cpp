@@ -59,7 +59,7 @@ int main(int argc, char *argv)
     NetwordsTests::run_tests();
 #endif
 
-#if 1
+#if 0
     FILE *file = 0;
     fopen_s(&file, "test.json", "r");
     if (file)
@@ -96,6 +96,7 @@ int main(int argc, char *argv)
         if (file)
         {
             fprintf(file, json_write_buffer);
+            fclose(file);
         }
     }
     else
@@ -104,12 +105,7 @@ int main(int argc, char *argv)
     }
 #endif
 
-    "nw new [word|phrase], [related_word], [related_word], ...";
-    "nw add [word|phrase], [related_word], [related_word], ...";
-    "nw show [word|phrase]"
-    "exit";
-
-    nw_cmdl_run();
+    // nw_cmdl_run();
 
     return 0;
 }

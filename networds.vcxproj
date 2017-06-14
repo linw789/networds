@@ -123,8 +123,6 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="code\networds.h" />
-    <ClInclude Include="code\networds_tests.h" />
-    <ClInclude Include="code\strpool.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

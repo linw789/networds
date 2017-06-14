@@ -4,11 +4,15 @@ todo
 [ ] : to start  [x] : complete  [i] : in progress  [w] : won't do
 
 [i] Write command line loop.
-[ ] Revise strpool_string_node structure and the way of finding next free node.
+[ ] Write more unit tests for strpool.
+[ ] Handle memory allocation of netword_t and networdpool_t.
+[ ] Make right use of size_t.
+[ ] Validate command line arguments for alphabet-only strings.
 [ ] Address reference counting issue of strpool_handle.
 [ ] Add memory footprint metrics.
 [ ] Make a simple stupid unit test framework that can save me from manually 
     calling every test function.
+[x] Revise strpool_string_node structure and the way of finding next free node.
 [i] Write unit tests for strpool.
 [x] Parse JSON to netword structs in memory.
 [x] Finish strpool_discard_handle function, take into account of ref_count.
@@ -56,7 +60,6 @@ uint32_t memory_align(uint32_t memory, uint32_t a)
     uint32_t result = (memory + a - 1) & (~(a - 1));
     return result;
 }
-
 
 /*==============================
     String Operations 
@@ -141,6 +144,28 @@ int lt_str_ncompare(const char *str0, const char *str1, size_t count)
     String Pool 
 ================*/
 
+#define STRPOOL_MALLOC_SENTINEL 0x771df001
+
+void *strpool_malloc(size_t size)
+{
+    char *mem = (char *)malloc(size + sizeof(size_t) + sizeof(int32_t));
+    *(size_t *)mem = size;
+    char *result = mem + sizeof(size_t);
+    *(uint32_t *)(result + size) = STRPOOL_MALLOC_SENTINEL;
+    return (void *)result;
+}
+
+void strpool_free(void *ptr)
+{
+    char *real_ptr = (char *)ptr - sizeof(size_t);
+    size_t size = *(size_t *)real_ptr;
+    uint32_t sentinel = *(uint32_t *)(real_ptr + sizeof(size_t) + size);
+    // I believe crt's free() already does something like this. But I don't have
+    // source code and can't debug it. We have to fucking do it again ourselves.
+    assert(sentinel == STRPOOL_MALLOC_SENTINEL);
+    free(real_ptr);
+}
+
 struct strpool_hashslot
 {
     uint32_t string_hash;
@@ -199,65 +224,70 @@ struct strpool_handle
 };
 
 /**
- * A strpool_string_node is stored in front of every string.
+ * A strpool_string_node is stored in front of every string in memory. It's used 
+ * to create a special doubly linked list of which the order of the nodes is the
+ * same as they are stored in memory. For example if node_a->front_node_offset 
+ * == node_b_offset, then node_b_offset + node_b->size == node_a_offset. This 
+ * imposition is to save memory which otherwise would include two extra int32 
+ * for prev_node_offset and next_node_offset. Even then front_node_offset has to
+ * exist to help merge a node, when it's being freed, with a possible free node 
+ * directly in front of it in memory. This makes searching free node for 
+ * insertion O(n) instead O(1) because now we can't chain all free nodes in 
+ * front of the list but need to loop through all nodes, which isn't too bad 
+ * considering our usage pattern in this program.
  */
 struct strpool_string_node
 {
-    // memory offset of strpool_string_node in strpool.string_block 
-    int32_t prev_node_offset;
-    int32_t next_node_offset;
-
     // the memory offset of the string node that's physically in front of this 
     // node in memory
     int32_t front_node_offset;
-
     // size = sizeof(strpool_string_node) + string_length + sizeof('\0') + alignment_padding
     int32_t size; 
-
     // string_length == 0 means it's a free node
     int32_t string_length;
 };
 
-#define STRPOOL_STRING_BLOCK_MIN_SIZE next_pow2(sizeof(strpool_string_node) + 8 + 1)
-
-#define STRPOOL_DUMMY_NODE_SENTINEL 0x001df001
+static const int32_t STRPOOL_STRING_BLOCK_MIN_SIZE = (int32_t)(sizeof(strpool_string_node) * 2);
+static const int32_t STRPOOL_DUMMY_NODE_LENGTH_SENTINEL = 1771;
+static const int32_t STRPOOL_DUMMY_NODE_SIZE = (int32_t)sizeof(strpool_string_node);
 
 struct strpool
 {
-    strpool_hashslot *hashslots;
-    strpool_entry *entries;
+    strpool_hashslot *hashslots = 0;
+    strpool_entry *entries = 0;
 
     // Memory block storing all strings. Each string must be appended with '\0', 
     // and prepended with a strpool_string_node.
-    char *string_block;
-    int32_t string_block_size;
+    char *string_block = 0;
+    int32_t string_block_size = 0;
 
     // dummy node serves as head and tail for a circular linked list, it's always 0
-    int32_t dummy_node_offset;
+    int32_t dummy_node_offset = 0;
+    int32_t first_free_node_offset = 0;
 
     // dummy free entry, always 0
-    int32_t dummy_free_entry_index;
+    int32_t dummy_free_entry_index = 0;
 
-    int32_t hashslots_capacity;
-    int32_t entries_capacity;
-    int32_t hashslots_count;
-    int32_t entries_count;
+    int32_t hashslots_capacity = 0;
+    int32_t entries_capacity = 0;
+    int32_t hashslots_count = 0;
+    int32_t entries_count = 0;
 
     ~strpool()
     {
         if (hashslots != 0)
         {
-            free(hashslots);
+            strpool_free(hashslots);
         }
 
         if (entries != 0)
         {
-            free(entries);
+			strpool_free(entries);
         }
 
         if (string_block != 0)
         {
-            free(string_block);
+			strpool_free(string_block);
         }
     }
 };
@@ -286,76 +316,90 @@ inline strpool_string_node *strpool_get_string_node(strpool *pool, int32_t offse
     return result;
 }
 
-/**
- * Insert insertee_node after first_node
- */
-void strpool_insert_string_node(strpool *pool, int32_t first_node_offset, int32_t insertee_node_offset)
+void strpool_extend_string_block(strpool *pool, int32_t new_string_block_size)
 {
-    strpool_string_node *first_node = strpool_get_string_node(pool, first_node_offset);
-    strpool_string_node *second_node = strpool_get_string_node(pool, first_node->next_node_offset);
-    strpool_string_node *insertee_node = strpool_get_string_node(pool, insertee_node_offset);
+    /* 
+    Put dummy at the end of the memory and set the size to -dummy_node_offset
+    so that when we loop through the dummy node we can go back to the first
+    node with the same calculation which is next_node_offset =
+    dummy_node_offset + dummy_node->size.
+    */
 
-	// insert insertee_node in between first_node and second_node
-    insertee_node->next_node_offset = first_node->next_node_offset;
-    second_node->prev_node_offset = insertee_node_offset;
-    first_node->next_node_offset = insertee_node_offset;
-    insertee_node->prev_node_offset = first_node_offset;
-}
+	assert(new_string_block_size > pool->string_block_size);
+    char *new_string_block = (char *)strpool_malloc(new_string_block_size);
+    assert(new_string_block);
 
-void strpool_insert_free_node(strpool *pool, strpool_string_node *free_node)
-{
-    strpool_string_node *dummy_node = strpool_get_string_node(pool, pool->dummy_node_offset);
-    strpool_string_node *node = dummy_node;
-    strpool_string_node *next_node = strpool_get_string_node(pool, node->next_node_offset);
+    int32_t first_free_node_offset = 0;
+    strpool_string_node *first_free_node = 0;
 
-    // Insert the free node in descending order regarding size. This makes the 
-    // memory less fragmented but the insertion operation lower.
-    while (next_node != dummy_node && 
-           next_node->string_length == 0 && 
-           next_node->size < free_node->size)
+    if (pool->string_block != 0)
     {
-        node = next_node;
-        next_node = strpool_get_string_node(pool, node->next_node_offset);
+        memcpy(new_string_block, pool->string_block, pool->string_block_size);
+        memset(new_string_block + pool->string_block_size, 0, new_string_block_size - pool->string_block_size);
+
+		char *old_string_block = pool->string_block;
+		int32_t old_string_block_size = pool->string_block_size;
+		pool->string_block = new_string_block;
+		pool->string_block_size = new_string_block_size;
+
+        first_free_node_offset = pool->dummy_node_offset;
+        first_free_node = strpool_get_string_node(pool, first_free_node_offset);
+        // first_free_node->front_node_offset doesn't change
+        first_free_node->size = new_string_block_size - old_string_block_size;
+        first_free_node->string_length = 0;
+
+        strpool_free(old_string_block);
+    }
+    else
+    {
+        pool->string_block = new_string_block;
+        pool->string_block_size = new_string_block_size;
+        memset(pool->string_block, 0, pool->string_block_size);
+
+        first_free_node = strpool_get_string_node(pool, first_free_node_offset);
+        first_free_node->front_node_offset = pool->dummy_node_offset;
+        first_free_node->size = new_string_block_size - STRPOOL_DUMMY_NODE_SIZE;
+        first_free_node->string_length = 0;
+
     }
 
-    int32_t node_offset = (int32_t)((char *)node - pool->string_block);
-    int32_t free_node_offset = (int32_t)((char *)free_node - pool->string_block);
-    strpool_insert_string_node(pool, node_offset, free_node_offset);
+    pool->dummy_node_offset = pool->string_block_size - STRPOOL_DUMMY_NODE_SIZE;
+    strpool_string_node *dummy_node = strpool_get_string_node(pool, pool->dummy_node_offset);
+    dummy_node->front_node_offset = first_free_node_offset;
+    dummy_node->size = -pool->dummy_node_offset;
+    dummy_node->string_length = STRPOOL_DUMMY_NODE_LENGTH_SENTINEL;
+
+    // make the link circular
+    int32_t first_node_offset = pool->dummy_node_offset + dummy_node->size;
+    strpool_string_node *first_node = strpool_get_string_node(pool, first_node_offset);
+    first_node->front_node_offset = pool->dummy_node_offset;
+
+    strpool_string_node *front_node = strpool_get_string_node(pool, first_free_node->front_node_offset);
+    if (front_node->string_length == 0)
+    {
+        dummy_node->front_node_offset = first_free_node->front_node_offset;
+        front_node->size += first_free_node->size;
+        first_free_node_offset = first_free_node->front_node_offset;
+    }
+
+    pool->first_free_node_offset = first_free_node_offset;
 }
 
 int32_t strpool_init(strpool *pool, int32_t string_block_size, int32_t hashslot_capacity, int32_t entry_capacity)
 {
-    string_block_size = memory_align(string_block_size, STRPOOL_STRING_BLOCK_MIN_SIZE);
-    pool->string_block = (char *)malloc(string_block_size);
-    assert(pool->string_block);
-    pool->string_block_size = string_block_size;
-    memset(pool->string_block, 0, pool->string_block_size);
-
-    pool->dummy_node_offset = 0;
-    strpool_string_node *dummy_node = strpool_get_string_node(pool, pool->dummy_node_offset);
-    dummy_node->size = STRPOOL_STRING_BLOCK_MIN_SIZE;
-    dummy_node->string_length = STRPOOL_DUMMY_NODE_SENTINEL;
-
-    int32_t first_node_offset = STRPOOL_STRING_BLOCK_MIN_SIZE;
-    int32_t first_node_size = pool->string_block_size - STRPOOL_STRING_BLOCK_MIN_SIZE;
-    strpool_string_node *first_node = strpool_get_string_node(pool, first_node_offset);
-    first_node->size = first_node_size;
-    first_node->string_length = 0;
-
-    first_node->prev_node_offset = pool->dummy_node_offset;
-    first_node->next_node_offset = pool->dummy_node_offset;
-	dummy_node->prev_node_offset = first_node_offset;
-	dummy_node->next_node_offset = first_node_offset;
+	if (string_block_size < STRPOOL_STRING_BLOCK_MIN_SIZE) string_block_size = STRPOOL_STRING_BLOCK_MIN_SIZE;
+    string_block_size = memory_align(string_block_size, sizeof(size_t));
+    strpool_extend_string_block(pool, string_block_size);
 
     int32_t hashslot_buffer_size = hashslot_capacity * sizeof(strpool_hashslot);
-    pool->hashslots = (strpool_hashslot*)malloc(hashslot_buffer_size);
+    pool->hashslots = (strpool_hashslot*)strpool_malloc(hashslot_buffer_size);
     assert(pool->hashslots);
     pool->hashslots_capacity = hashslot_capacity;
     pool->hashslots_count = 0;
     memset(pool->hashslots, 0, hashslot_buffer_size);
 
     int32_t entry_buffer_size = entry_capacity * sizeof(strpool_entry);
-    pool->entries = (strpool_entry *)malloc(entry_buffer_size);
+    pool->entries = (strpool_entry *)strpool_malloc(entry_buffer_size);
     assert(pool->entries);
     pool->entries_capacity = entry_capacity;
     pool->entries_count = 0;
@@ -374,42 +418,58 @@ int32_t strpool_store_string(strpool *pool, const char *string, int str_length)
 {
     int32_t string_data_offset = -1;
 
-    strpool_string_node *dummy_node = strpool_get_string_node(pool, pool->dummy_node_offset);
-    int32_t node_offset = dummy_node->next_node_offset;
-    while (node_offset != pool->dummy_node_offset)
+    int aliged_need_size = memory_align(sizeof(strpool_string_node) + str_length + sizeof('\0'), sizeof(size_t));
+    int32_t rover_offset = pool->first_free_node_offset;
+    while (1)
     {
-        strpool_string_node *node = strpool_get_string_node(pool, node_offset);
-
-        if (node->string_length == 0)
+        strpool_string_node *node = strpool_get_string_node(pool, rover_offset);
+        if (node->string_length == 0 && node->size > aliged_need_size)
         {
-			int aliged_current_node_size = memory_align(sizeof(strpool_string_node) + str_length + sizeof('\0'), 8);
-			if (node->size >= aliged_current_node_size)
-			{
-                string_data_offset = node_offset + sizeof(strpool_string_node);
-				char *string_data = (char *)node + sizeof(strpool_string_node);
-                // memcpy requires restrict pointer, we assume it's safe here.
-				memcpy(string_data, string, str_length);
-				string_data[str_length] = '\0';
-				node->string_length = str_length;
-				
-				int size_left = node->size - aliged_current_node_size;
-				int min_size = STRPOOL_STRING_BLOCK_MIN_SIZE;
-				if (size_left >= min_size)
-				{
-					node->size = aliged_current_node_size;
-
-                    int32_t next_free_node_offset = node_offset + aliged_current_node_size;
-					strpool_string_node *next_free_node = strpool_get_string_node(pool, next_free_node_offset);
-					next_free_node->size = size_left;
-					next_free_node->string_length = 0;
-
-                    strpool_insert_string_node(pool, pool->dummy_node_offset, next_free_node_offset);
-				}
-				break;
-			}
+            break;
         }
-        node_offset = node->next_node_offset;
+        rover_offset = rover_offset + node->size;
+        if (rover_offset == pool->first_free_node_offset)
+        {
+            rover_offset = -1;
+			break;
+        }
     }
+
+    if (rover_offset < 0)
+    {
+        strpool_extend_string_block(pool, memory_align(pool->string_block_size * 2 + aliged_need_size, sizeof(size_t)));
+        rover_offset = pool->first_free_node_offset;
+    }
+
+    int32_t aligned_new_node_size = memory_align(sizeof(strpool_string_node)+ str_length + sizeof('\0'), sizeof(size_t));
+    strpool_string_node *new_node = strpool_get_string_node(pool, rover_offset);
+    if (new_node->size > aliged_need_size)
+    {
+        string_data_offset = rover_offset + sizeof(strpool_string_node);
+        char *string_data = (char *)new_node + sizeof(strpool_string_node);
+        // memcpy requires restrict pointer, we assume it's safe here.
+        memcpy(string_data, string, str_length);
+        string_data[str_length] = '\0';
+        new_node->string_length = str_length;
+
+        pool->first_free_node_offset = rover_offset + new_node->size;
+
+        int32_t size_left = new_node->size - aligned_new_node_size;
+        if (size_left >= STRPOOL_STRING_BLOCK_MIN_SIZE)
+        {
+            new_node->size = aligned_new_node_size;
+
+            int32_t next_free_node_offset = rover_offset + aligned_new_node_size;
+            strpool_string_node *next_free_node = strpool_get_string_node(pool, next_free_node_offset);
+            next_free_node->size = size_left;
+            next_free_node->string_length = 0;
+            next_free_node->front_node_offset = rover_offset;
+
+            pool->first_free_node_offset = next_free_node_offset;
+        }
+    }
+
+    assert(string_data_offset >= 0);
 
     return string_data_offset;
 }
@@ -564,28 +624,6 @@ strpool_handle strpool_get_handle(strpool *pool, const char *input_string, int i
      */
 
     int32_t string_data_offset = strpool_store_string(pool, input_string, input_str_length);
-    if (string_data_offset == -1)
-    {
-        /* Expand string block and then try again.*/
-
-        int new_string_block_size = memory_align(pool->string_block_size * 2, STRPOOL_STRING_BLOCK_MIN_SIZE);
-        char *new_string_block = (char *)malloc(new_string_block_size);
-        memcpy(new_string_block, pool->string_block, pool->string_block_size);
-
-        int32_t next_free_node_offset = pool->string_block_size;
-        strpool_insert_string_node(pool, pool->dummy_node_offset, next_free_node_offset);
-        strpool_string_node *next_free_node = strpool_get_string_node(pool, next_free_node_offset);
-        next_free_node->size = new_string_block_size - pool->string_block_size;
-        next_free_node->string_length = 0;
-
-        free(pool->string_block);
-        pool->string_block = new_string_block;
-        pool->string_block_size = new_string_block_size;
-
-		string_data_offset = strpool_store_string(pool, input_string, input_str_length);
-		assert(string_data_offset > 0);
-    }
-    
     new_entry.string_data_offset = string_data_offset;
 
     strpool_handle result = {new_entry_index};
@@ -604,43 +642,34 @@ int strpool_discard_handle(strpool *pool, strpool_handle handle)
 
     /* Recycle string memory. */
 
-    strpool_string_node *node = (strpool_string_node *)(pool->string_block + entry.string_data_offset - sizeof(strpool_string_node));
+    int32_t node_offset = entry.string_data_offset - sizeof(strpool_string_node);
+    strpool_string_node *node = strpool_get_string_node(pool, node_offset);
 
-    if (node->front_node_offset != pool->dummy_node_offset)
+    strpool_string_node *front_node = strpool_get_string_node(pool, node->front_node_offset);
+
+    int32_t next_node_offset = node_offset + node->size;
+    strpool_string_node *next_node = strpool_get_string_node(pool, next_node_offset);
+
+    if (front_node->string_length == 0)
     {
-        strpool_string_node *front_node = strpool_get_string_node(pool, node->front_node_offset);
-        if (front_node->string_length == 0)
-        {
-            /* Conjoin this node and the free one in front. */
+        /* Conjoin this node and the free one in front. */
 
-            strpool_string_node *prev_node = strpool_get_string_node(pool, node->prev_node_offset);
-            strpool_string_node *next_node = strpool_get_string_node(pool, node->next_node_offset);
-            prev_node->next_node_offset = node->next_node_offset;
-            next_node->prev_node_offset = node->prev_node_offset;
+        next_node->front_node_offset = node->front_node_offset;
+        front_node->size += node->size;
 
-            front_node->size = front_node->size + node->size;
-            node = front_node;
-        }
+        node_offset = node->front_node_offset;
+        node = front_node;
     }
 
-    if ((char *)node + node->size < pool->string_block)
+    if (next_node->string_length == 0)
     {
-        int32_t node_offset = (int32_t)((char *)node - pool->string_block + node->size);
-        strpool_string_node *back_node = strpool_get_string_node(pool, node_offset);
-        if (back_node->string_length == 0)
-        {
-            /* Combine with the free one in back */
-
-            strpool_string_node *prev_node = strpool_get_string_node(pool, back_node->prev_node_offset);
-            strpool_string_node *next_node = strpool_get_string_node(pool, back_node->next_node_offset);
-            prev_node->next_node_offset = back_node->next_node_offset;
-            next_node->prev_node_offset = back_node->prev_node_offset;
-
-            node->size = node->size + back_node->size;
-        }
+        int32_t next_2_node_offset = next_node_offset + next_node->size;
+        strpool_string_node *next_2_node = strpool_get_string_node(pool, next_2_node_offset);
+        next_2_node->front_node_offset = node->front_node_offset;
+        node->size += next_node->size;
     }
 
-    strpool_insert_free_node(pool, node);
+    pool->first_free_node_offset = node_offset;
 
     /* Recycle entry and hashslot */
 
@@ -718,38 +747,6 @@ void nw_add_related_word(netword_t *word, const char *related_word, int related_
         // TODO: inscrease related words capacity
     }
     word->related_words[word->related_words_count++] = strpool_get_handle(stringpool, related_word, related_word_length);
-}
-
-int nw_add_related_words(netword_t *word, char *new_relative)
-{
-    //int new_relative_length = lt_str_length(new_relative);
-
-    //if (word->relatives == nullptr)
-    //{
-    //    word->relatives = (char *)malloc(new_relative_length + 1);
-    //    lt_str_ncopy(word->relatives, new_relative_length + 1, new_relative);
-    //    word->relative_num = 1;
-    //}
-    //else
-    //{
-    //    int old_length = lt_str_length(word->relatives);
-    //    int size = old_length + 1 + new_relative_length + 1; // 1 for space, 1 for '\0'
-    //    char *new_buffer = (char *)realloc(word->relatives, size);
-    //    if (new_buffer)
-    //    {
-    //        word->relatives = new_buffer;
-    //        new_buffer = nullptr;
-    //        *(word->relatives + old_length) = ' ';
-    //        lt_str_ncopy(word->relatives + old_length + 1, new_relative_length + 1, new_relative);
-    //    }
-    //    else
-    //    {
-    //        // TODO lw: log
-    //        return -1;
-    //    }
-    //}
-
-    return 0;
 }
 
 /*========================
@@ -1167,12 +1164,16 @@ void nw_json_write(networdpool_t *wordspool, char *json_buffer, size_t json_buff
     Command Line Loop
 ============================*/
 
-void nw_skip_whitespace(const char *cmdline, size_t &cmdline_pos)
+void nw_skip_whitespace(const char *cmdline, size_t cmdline_length, size_t &cmdline_pos)
 {
     char c = *(cmdline + cmdline_pos);
     while (c == ' ' || c == '\n' || c == '\t' || c == '\r' || c == '\v')
     {
         c = *(cmdline + (++cmdline_pos));
+        if (cmdline_pos >= cmdline_length)
+        {
+            break;
+        }
     }
     return;
 }
@@ -1182,7 +1183,7 @@ struct nw_cmdl_tokens
     static const int MaxTokenNum = 128;
     int token_num = 0;
     int token_start_positions[MaxTokenNum];
-    int token_end_positions[MaxTokenNum];
+    int token_lengths[MaxTokenNum];
 };
 
 enum nw_cmd_e
@@ -1194,6 +1195,10 @@ enum nw_cmd_e
     cmd_num = 4,
 };
 
+/**
+ * Convert command arguments (not command itself) to string tokens and return 
+ * the command type.
+ */
 nw_cmd_e nw_cmdl_tokenize(const char *cmdline, int cmdline_length, nw_cmdl_tokens *tokens)
 {
     nw_cmd_e nw_cmd = nw_cmd_e::cmd_unrecognized;
@@ -1207,7 +1212,7 @@ nw_cmd_e nw_cmdl_tokenize(const char *cmdline, int cmdline_length, nw_cmdl_token
         return nw_cmd_e::cmd_unrecognized;
     }
     cmdline_pos += 3;
-    nw_skip_whitespace(cmdline, cmdline_pos);
+    nw_skip_whitespace(cmdline, cmdline_length, cmdline_pos);
     if (lt_str_ncompare(cmdline + cmdline_pos, "new ", 4) == 0)
     {
         nw_cmd = nw_cmd_e::cmd_new;
@@ -1227,23 +1232,30 @@ nw_cmd_e nw_cmdl_tokenize(const char *cmdline, int cmdline_length, nw_cmdl_token
     {
         return nw_cmd_e::cmd_unrecognized;
     }
-    while(cmdline_pos < cmdline_length)
+    while(1)
     {
-        nw_skip_whitespace(cmdline, cmdline_pos);
-        tokens->token_start_positions[tokens->token_num] = (int)cmdline_pos - 1;
+        nw_skip_whitespace(cmdline, cmdline_length, cmdline_pos);
+        if (*(cmdline + cmdline_pos) == '\n' || 
+            *(cmdline + cmdline_pos) == '\0' ||
+            cmdline_pos >= cmdline_length)
+        {
+            break;
+        }
+        tokens->token_start_positions[tokens->token_num] = (int)cmdline_pos;
         while (*(cmdline + cmdline_pos) != ',' && 
                *(cmdline + cmdline_pos) != '\n' &&
                cmdline_pos < cmdline_length)
         {
             cmdline_pos++;
         }
-        tokens->token_end_positions[tokens->token_num] = (int)cmdline_pos - 1;
+        tokens->token_lengths[tokens->token_num] = (int)cmdline_pos - tokens->token_start_positions[tokens->token_num];
         // trim whitespaces at end
-        while (*(cmdline + tokens->token_end_positions[tokens->token_num]) == ' ' ||
-               *(cmdline + tokens->token_end_positions[tokens->token_num]) == '\t' ||
-               *(cmdline + tokens->token_end_positions[tokens->token_num]) == '\r')
+        const char *token = cmdline + tokens->token_start_positions[tokens->token_num];
+        while (*(token + tokens->token_lengths[tokens->token_num] - 1) == ' ' ||
+               *(token + tokens->token_lengths[tokens->token_num] - 1) == '\t' ||
+               *(token + tokens->token_lengths[tokens->token_num] - 1) == '\r')
         {
-            tokens->token_end_positions[tokens->token_num]--;
+            tokens->token_lengths[tokens->token_num]--;
         }
         tokens->token_num++;
     }
@@ -1287,16 +1299,46 @@ int nw_cmd_readline(FILE *stream, char *line, int max_line_length)
 
 void nw_cmdl_run()
 {
+    strpool stringpool;
     networdpool_t networdspool;
-    networdspool.pool_capacity = 
 
     FILE *netword_json_file = 0;
     fopen_s(&netword_json_file, "networds.json", "r");
     if (netword_json_file)
     {
+        fseek(netword_json_file, 0, SEEK_END);
+        size_t file_length = ftell(netword_json_file);
+        fseek(netword_json_file, 0, SEEK_SET);
 
+        char *json_buffer = (char *)malloc(file_length);
+        json_buffer[file_length - 1] = '\0';
+        size_t file_read_length = fread(json_buffer, 1, file_length, netword_json_file);
+        if (file_read_length != file_length)
+        {
+            fprintf(stderr, "File read length isn't equal to file length!\n");
+        }
+        fclose(netword_json_file);
+
+        networdspool.pool_capacity = (int32_t)(file_read_length / 10);
+        networdspool.words = (netword_t *)malloc(networdspool.pool_capacity * sizeof(netword_t));
+
+        int32_t stringblock_size = (int32_t)(file_read_length / 2);
+        int32_t hashslot_capacity = (int32_t)(file_read_length / 6);
+        int32_t entry_capacity = (int32_t)(file_read_length / 4);
+        strpool_init(&stringpool, stringblock_size, hashslot_capacity, entry_capacity);
+
+        nw_json_read(json_buffer, file_read_length, &networdspool, &stringpool);
     }
+    else
+    {
+        networdspool.pool_capacity = 10;
+        networdspool.words = (netword_t *)malloc(networdspool.pool_capacity * sizeof(netword_t));
 
+        int32_t stringblock_size = 40;
+        int32_t hashslot_capacity = 120;
+        int32_t entry_capacity = 80;
+        strpool_init(&stringpool, stringblock_size, hashslot_capacity, entry_capacity);
+    }
 
     nw_cmdl_tokens cmdl_tokens;
     const int cmdline_max_length = 1024;
@@ -1317,7 +1359,20 @@ void nw_cmdl_run()
 
             case nw_cmd_e::cmd_new:
             {
-                printf("nw new ...\n");
+                if (cmdl_tokens.token_num == 0)
+                {
+                    printf("No argument following the command \'new\'\n");
+                }
+                const char *new_word = cmdline + cmdl_tokens.token_start_positions[0];
+                int new_word_length = cmdl_tokens.token_lengths[0];
+                netword_t *netword = nw_make_word(&networdspool, new_word, new_word_length, &stringpool);
+                for (int i = 1; i < cmdl_tokens.token_num; ++i)
+                {
+                    new_word = cmdline + cmdl_tokens.token_start_positions[i];
+                    new_word_length = cmdl_tokens.token_lengths[i];
+                    nw_add_related_word(netword, new_word, new_word_length, &stringpool);
+                }
+                printf("No argument following the command \'new\'\n");
             } break;
 
             case nw_cmd_e::cmd_add:
@@ -1369,23 +1424,19 @@ namespace NetwordsTests
         assert(lt_str_ncompare("aabc", "aabb", 4) > 0);
     }
 
-    void strpool_init_input_normal_set_dummy_node()
+    void strpool_init_test()
     {
         const int32_t pool_string_block_size = 100;
 
         strpool pool;
         strpool_init(&pool, pool_string_block_size, 20, 20);
-        assert(pool.dummy_node_offset == 0);
 
         strpool_string_node *dummy_node = strpool_get_string_node(&pool, pool.dummy_node_offset);
-        assert(dummy_node->string_length == STRPOOL_DUMMY_NODE_SENTINEL);
+        assert(dummy_node->string_length == STRPOOL_DUMMY_NODE_LENGTH_SENTINEL);
 
-        strpool_string_node *next_free_node = strpool_get_string_node(&pool, dummy_node->next_node_offset);
-        assert(next_free_node->string_length == 0);
-        assert(next_free_node->next_node_offset == pool.dummy_node_offset);
-        assert(next_free_node->prev_node_offset == pool.dummy_node_offset);
-
-        assert(dummy_node->size + next_free_node->size == pool.string_block_size);
+        strpool_string_node *first_free_node = strpool_get_string_node(&pool, pool.first_free_node_offset);
+        assert(first_free_node->front_node_offset == pool.dummy_node_offset);
+        assert(dummy_node->front_node_offset == pool.first_free_node_offset);
     }
 
     void strpool_get_handle_input_normal_return_normal()
@@ -1396,7 +1447,6 @@ namespace NetwordsTests
 
         strpool_handle handle = strpool_get_handle(&pool, test_str0, lt_str_length(test_str0));
         const char *result_str0 = strpool_get_string(&pool, handle);
-
         assert(lt_str_ncompare(test_str0, result_str0, lt_str_length(result_str0)) == 0);
     }
 
@@ -1409,11 +1459,22 @@ namespace NetwordsTests
 
         strpool_handle handle0 = strpool_get_handle(&pool, test_str0, lt_str_length(test_str0));
         strpool_handle handle1 = strpool_get_handle(&pool, test_str0, lt_str_length(test_str0));
-
 		assert(handle0 == handle1);
 
         const char *result_str1 = strpool_get_string(&pool, handle1);
         assert(lt_str_ncompare(test_str0, result_str1, lt_str_length(result_str1)) == 0);
+    }
+
+    void strpool_get_handle_test_insufficient_initial_string_block()
+    {
+        const char *test_str0 = "the initial string block is too small";
+
+        strpool pool;
+        strpool_init(&pool, 32, 10, 5);
+
+        strpool_handle handle = strpool_get_handle(&pool, test_str0, lt_str_length(test_str0));
+        const char *result_str0 = strpool_get_string(&pool, handle);
+        assert(lt_str_ncompare(test_str0, result_str0, lt_str_length(result_str0)) == 0);
     }
 
     STRPOOL_STRING_HASH_F(strpool_same_hash_stub)
@@ -1433,12 +1494,10 @@ namespace NetwordsTests
 
         strpool_handle handle0 = strpool_get_handle(&pool, test_str0, lt_str_length(test_str0));
         strpool_handle handle1 = strpool_get_handle(&pool, test_str1, lt_str_length(test_str1));
-
         assert(handle0 != handle1);
 
         const strpool_entry &entry0 = pool.entries[handle0.entry_index];
         const strpool_entry &entry1 = pool.entries[handle1.entry_index];
-
         assert(entry1.hashslot - entry0.hashslot == 1);
 
         strpool_calc_string_hash = strpool_calculate_string_hash;
@@ -1465,12 +1524,15 @@ namespace NetwordsTests
             handles[i] = strpool_get_handle(&pool, strings[i], lt_str_length(strings[i]));
         }
 
-        strpool_string_node *node = strpool_get_string_node(&pool, pool.dummy_node_offset);
+        strpool_string_node *dummy_node = strpool_get_string_node(&pool, pool.dummy_node_offset);
+        int32_t node_offset = dummy_node->front_node_offset;
+        strpool_string_node *node = strpool_get_string_node(&pool, node_offset);
         for (int i = 0; i < n; ++i)
         {
-            const char *teststr = pool.string_block + node->prev_node_offset + sizeof(strpool_string_node);
+            const char *teststr = strpool_get_string(&pool, handles[i]);
             assert(lt_str_ncompare(teststr, strings[i], lt_str_length(strings[i])) == 0);
-            node = strpool_get_string_node(&pool, node->prev_node_offset);
+            node_offset += node->size;
+            node = strpool_get_string_node(&pool, node_offset);
         }
     }
 
@@ -1509,8 +1571,9 @@ namespace NetwordsTests
         lt_str_ncompare_input_various();
         nw_json_write_int32_test();
 
-        strpool_init_input_normal_set_dummy_node();
+        strpool_init_test();
         strpool_get_handle_input_normal_return_normal();
+		strpool_get_handle_test_insufficient_initial_string_block();
         strpool_get_handle_input_existing_string_return_normal();
         strpool_get_handle_input_multiple_strings_return_normal();
         strpool_get_handle_input_existing_string_same_hash_return_normal();
