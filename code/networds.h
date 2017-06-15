@@ -10,10 +10,9 @@ todo
 [ ] Validate command line arguments for alphabet-only strings.
 [ ] Address reference counting issue of strpool_handle.
 [ ] Add memory footprint metrics.
-[ ] Make a simple stupid unit test framework that can save me from manually 
+[x] Make a simple stupid unit test framework that can save me from manually 
     calling every test function.
 [x] Revise strpool_string_node structure and the way of finding next free node.
-[i] Write unit tests for strpool.
 [x] Parse JSON to netword structs in memory.
 [x] Finish strpool_discard_handle function, take into account of ref_count.
 [x] Fix all lt_* functions.
@@ -261,7 +260,7 @@ struct strpool
     char *string_block = 0;
     int32_t string_block_size = 0;
 
-    // dummy node serves as head and tail for a circular linked list, it's always 0
+    // dummy node serves as head and tail for a circular linked list
     int32_t dummy_node_offset = 0;
     int32_t first_free_node_offset = 0;
 
@@ -1400,15 +1399,79 @@ void nw_cmdl_run()
     Unit Tests
 ===============*/
 
+struct sit_test_node;
+
+struct sit_test_registry
+{
+    sit_test_node *head = 0;
+    sit_test_node *current_node = 0;
+    int node_count = 0;
+
+    static sit_test_registry *get_instance()
+    {
+        static sit_test_registry g_test_registry = {0};
+        return &g_test_registry;
+    }
+
+    static void add_node(sit_test_node *node);
+    static void run();
+};
+        
+struct sit_test_node
+{
+    sit_test_node *next_node;
+
+    sit_test_node()
+    {
+        sit_test_registry::add_node(this);
+    }
+
+    virtual void run() = 0;
+};
+
+void sit_test_registry::add_node(sit_test_node *node)
+{
+    if (get_instance()->head == 0)
+    {
+        get_instance()->head = node;
+        get_instance()->current_node = node;
+    }
+    else
+    {
+        get_instance()->current_node->next_node = node;
+        get_instance()->current_node = node;
+    }
+    get_instance()->node_count++;
+}
+
+void sit_test_registry::run()
+{
+    sit_test_node *node = get_instance()->head;
+    int node_count = get_instance()->node_count;
+    for (int i = 0; i < node_count; ++i)
+    {
+        node->run();
+        node = node->next_node;
+    }
+    printf("tests run: %d", node_count);
+}
+#define SIT_TEST(test_case_name) \
+    struct sit_##test_case_name : public sit_test_node { \
+        sit_##test_case_name() : sit_test_node() { } \
+        void run() override; \
+    } sit_node_##test_case_name; \
+    void sit_##test_case_name::run()
+    
+
 namespace NetwordsTests
 {
-    void next_pow2_input_zero_return_one()
+    SIT_TEST(next_pow2_test_input_zero_return_one)
     {
         uint32_t result = next_pow2(0);
         assert(result == 1);
     }
 
-    void memory_align_input_normal()
+    SIT_TEST(memory_align_test_normal)
     {
         uint32_t result = memory_align(0x000f, 8);
         assert(result == 0x0010);
@@ -1416,7 +1479,7 @@ namespace NetwordsTests
         assert(result == 0x0008);
     }
 
-    void lt_str_ncompare_input_various()
+    SIT_TEST(lt_str_ncompare_input_various)
     {
         assert(lt_str_ncompare("aabb", "aabbc", 4) == 0);
         assert(lt_str_ncompare("aabb", "aabbc", 5) < 0);
@@ -1424,7 +1487,7 @@ namespace NetwordsTests
         assert(lt_str_ncompare("aabc", "aabb", 4) > 0);
     }
 
-    void strpool_init_test()
+    SIT_TEST(strpool_init_test)
     {
         const int32_t pool_string_block_size = 100;
 
@@ -1439,7 +1502,7 @@ namespace NetwordsTests
         assert(dummy_node->front_node_offset == pool.first_free_node_offset);
     }
 
-    void strpool_get_handle_input_normal_return_normal()
+    SIT_TEST(strpool_get_handle_input_normal_return_normal)
     {
         const char *test_str0 = "good stuff";
         strpool pool;
@@ -1450,7 +1513,7 @@ namespace NetwordsTests
         assert(lt_str_ncompare(test_str0, result_str0, lt_str_length(result_str0)) == 0);
     }
 
-    void strpool_get_handle_input_existing_string_return_normal()
+    SIT_TEST(strpool_get_handle_input_existing_string_return_normal)
     {
         const char *test_str0 = "better stuff";
 
@@ -1465,7 +1528,7 @@ namespace NetwordsTests
         assert(lt_str_ncompare(test_str0, result_str1, lt_str_length(result_str1)) == 0);
     }
 
-    void strpool_get_handle_test_insufficient_initial_string_block()
+    SIT_TEST(strpool_get_handle_test_insufficient_initial_string_block)
     {
         const char *test_str0 = "the initial string block is too small";
 
@@ -1482,7 +1545,7 @@ namespace NetwordsTests
         return 1771;
     }
 
-    void strpool_get_handle_input_existing_string_same_hash_return_normal()
+    SIT_TEST(strpool_get_handle_input_existing_string_same_hash_return_normal)
     {
         strpool_calc_string_hash = strpool_same_hash_stub;
 
@@ -1503,7 +1566,7 @@ namespace NetwordsTests
         strpool_calc_string_hash = strpool_calculate_string_hash;
     }
 
-    void strpool_get_handle_input_multiple_strings_return_normal()
+    SIT_TEST(strpool_get_handle_input_multiple_strings_return_normal)
     {
         const int n = 4;
 
@@ -1536,7 +1599,7 @@ namespace NetwordsTests
         }
     }
 
-    void nw_json_write_int32_test()
+    SIT_TEST(nw_json_write_int32_test)
     {
         char test_buffer[10];
         size_t buffer_pos = 0;
@@ -1564,20 +1627,8 @@ namespace NetwordsTests
 		unsigned b;
     };
 
-    void run_tests()
+    SIT_TEST(foo_struct_size_test)
     {
-		next_pow2_input_zero_return_one();
-		memory_align_input_normal();
-        lt_str_ncompare_input_various();
-        nw_json_write_int32_test();
-
-        strpool_init_test();
-        strpool_get_handle_input_normal_return_normal();
-		strpool_get_handle_test_insufficient_initial_string_block();
-        strpool_get_handle_input_existing_string_return_normal();
-        strpool_get_handle_input_multiple_strings_return_normal();
-        strpool_get_handle_input_existing_string_same_hash_return_normal();
-
-        // printf("size of foo: %d", (int32_t)sizeof(foo));
+        assert(sizeof(foo) == 12);
     }
 }

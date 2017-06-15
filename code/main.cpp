@@ -56,7 +56,8 @@ int main(int argc, char *argv)
 #endif
 
 #if 1
-    NetwordsTests::run_tests();
+    sit_test_registry::run();
+    // NetwordsTests::run_tests();
 #endif
 
 #if 0
@@ -106,6 +107,8 @@ int main(int argc, char *argv)
 #endif
 
     // nw_cmdl_run();
+
+    char pause = getchar();
 
     return 0;
 }
