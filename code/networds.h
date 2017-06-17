@@ -560,7 +560,7 @@ strpool_handle strpool_get_handle(strpool *pool, const char *input_string, int i
                 }
                 pool->hashslots[slot_index].string_hash = old_slot_string_hash;
                 pool->hashslots[slot_index].entry_index = old_hashslots[i].entry_index;
-                pool->hashslots[slot_index].base_count++;
+                pool->hashslots[base_slot_index].base_count++;
                 pool->entries[old_hashslots[i].entry_index].hashslot = slot_index;
             }
         }
@@ -1637,6 +1637,40 @@ namespace NetwordsTests
 
         const char *result_str3 = strpool_get_string(&pool, handle3); 
         assert(lt_str_ncompare(result_str3, str3, lt_str_length(str3)) == 0);
+
+        strpool_calc_string_hash = strpool_calculate_string_hash;
+    }
+
+    SIT_TEST(strpool_get_handle_test_insufficient_initial_hashslot_capacity_pass_in_same_string_expect_same_handle)
+    {
+        strpool_calc_string_hash = strpool_same_hash_stub;
+
+        strpool pool;
+        pool.hashslots_load_divider = 3;
+        strpool_init(&pool, 64, 4, 10);
+        
+        const char *str0 = "antithetical";
+        strpool_handle handle0 = strpool_get_handle(&pool, str0, lt_str_length(str0));
+        const char *str1 = "chicanery";
+        strpool_handle handle1 = strpool_get_handle(&pool, str1, lt_str_length(str1));
+        const char *str2 = "on the up and up";
+        strpool_handle handle2 = strpool_get_handle(&pool, str2, lt_str_length(str2));
+        const char *str3 = "on the up and up";
+        strpool_handle handle3 = strpool_get_handle(&pool, str3, lt_str_length(str2));
+
+        const char *result_str0 = strpool_get_string(&pool, handle0); 
+        assert(lt_str_ncompare(result_str0, str0, lt_str_length(str0)) == 0);
+
+        const char *result_str1 = strpool_get_string(&pool, handle1); 
+        assert(lt_str_ncompare(result_str1, str1, lt_str_length(str1)) == 0);
+
+        const char *result_str2 = strpool_get_string(&pool, handle2); 
+        assert(lt_str_ncompare(result_str2, str2, lt_str_length(str2)) == 0);
+
+        const char *result_str3 = strpool_get_string(&pool, handle3); 
+        assert(lt_str_ncompare(result_str3, str3, lt_str_length(str3)) == 0);
+
+        assert(handle2 == handle3);
 
         strpool_calc_string_hash = strpool_calculate_string_hash;
     }
