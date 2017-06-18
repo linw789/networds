@@ -4,12 +4,13 @@ todo
 [ ] : to start  [x] : complete  [i] : in progress  [w] : won't do
 
 [i] Write command line loop.
-[ ] Write more unit tests for strpool.
-[ ] Handle memory allocation of netword_t and networdpool_t.
+[i] Write more unit tests for strpool.
+[ ] Fix lt_str_ncompare.
 [ ] Make right use of size_t.
 [ ] Validate command line arguments for alphabet-only strings.
 [ ] Address reference counting issue of strpool_handle.
 [ ] Add memory footprint metrics.
+[x] Handle memory allocation of netword_t and networdpool_t.
 [x] Make a simple stupid unit test framework that can save me from manually 
     calling every test function.
 [x] Revise strpool_string_node structure and the way of finding next free node.
@@ -27,10 +28,11 @@ todo
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h> // memcmp, memcpy
+#include <time.h>
 
-/*==================
+/*========================
     Helper Functions
-==================*/
+========================*/
 
 /**
  * Compute the smallest power of 2 that's larger than or equal to x.
@@ -116,25 +118,79 @@ int lt_str_ncopy(char *dest, int dest_size, const char *src, int src_size = 0)
 /**
  * Compare \ref count characters from two null-terminated strings. Return the 
  * difference of two characters from each string as soon as they differ, 
- * otherwise return 0. 
+ * otherwise return 0. The default \ref count is 0 in which case two strings 
+ * have to have the same length to be considered equal.
  *
  * Examples: ("aabb", "aabbc", 4) returns 0
  *           ("aabb", "aabbc", 5) returns negative integer
  *           ("aAbb", "aabb", 4) returns negative integer
  */
-int lt_str_ncompare(const char *str0, const char *str1, size_t count)
+int lt_str_ncompare(const char *str0, const char *str1, size_t count = 0)
 {
-    while (count > 0)
+    if (count == 0)
     {
-        if (*str0 != *str1)
+        while (1)
         {
-            return *str0 - *str1;
-        }
+            if (*str0 != *str1)
+            {
+                return *str0 - *str1;
+            }
+            if (*str0 == '\0' || *str1 == '\0')
+            {
+                return 0;
+            }
 
-        str0++;
-        str1++;
-        count--;
+            str0++;
+            str1++;
+        }
     }
+    else
+    {
+        while (count > 0)
+        {
+            if (*str0 != *str1)
+            {
+                return *str0 - *str1;
+            }
+
+            str0++;
+            str1++;
+            count--;
+        }
+    }
+    return 0;
+}
+
+/**
+ *
+ */
+int lt_str_concat(const char *str0, size_t str0_size, const char *str1, size_t str1_size, char *dest_str, size_t dest_str_size)
+{
+    size_t pos0 = 0;
+    size_t pos1 = 0;
+    size_t dest_pos = 0;
+    while (pos0 < str0_size)
+    {
+        if (dest_pos >= dest_str_size - 1)
+        {
+            dest_str[dest_pos] = '\0';
+            return 1;
+        }
+        dest_str[dest_pos++] = str0[pos0++];
+    }
+
+    while (pos1 < str1_size)
+    {
+        if (dest_pos >= dest_str_size - 1)
+        {
+            dest_str[dest_pos] = '\0';
+            return 2;
+        }
+        dest_str[dest_pos++] = str1[pos1++];
+    }
+
+    dest_str[dest_pos] = '\0';
+
     return 0;
 }
 
@@ -319,15 +375,14 @@ inline strpool_string_node *strpool_get_string_node(strpool *pool, int32_t offse
     return result;
 }
 
+/** 
+ * Put dummy at the end of the memory and set the size to -dummy_node_offset
+ * so that when we loop through the dummy node we can go back to the first
+ * node with the same calculation which is next_node_offset =
+ * dummy_node_offset + dummy_node->size.
+ */
 void strpool_extend_string_block(strpool *pool, int32_t new_string_block_size)
 {
-    /* 
-    Put dummy at the end of the memory and set the size to -dummy_node_offset
-    so that when we loop through the dummy node we can go back to the first
-    node with the same calculation which is next_node_offset =
-    dummy_node_offset + dummy_node->size.
-    */
-
 	assert(new_string_block_size > pool->string_block_size);
     char *new_string_block = (char *)strpool_malloc(new_string_block_size);
     assert(new_string_block);
@@ -699,10 +754,15 @@ int strpool_discard_handle(strpool *pool, strpool_handle handle)
     return 0;
 }
 
-const char *strpool_get_string(strpool *pool, strpool_handle handle)
+const char *strpool_get_string(strpool *pool, strpool_handle handle, int32_t *str_length_out = 0)
 {
     const strpool_entry &entry = pool->entries[handle.entry_index];
     const char *result = (const char *)(pool->string_block + entry.string_data_offset);
+    if (str_length_out != 0)
+    {
+        strpool_string_node *stringnode = (strpool_string_node *)(result - sizeof(strpool_string_node));
+        *str_length_out = stringnode->string_length;
+    }
 	return result;
 }
 
@@ -711,6 +771,26 @@ const char *strpool_get_string(strpool *pool, strpool_handle handle)
     Networds app
 ====================*/
 
+#define NETWORD_MALLOC_SENTINEL 0x977abc0
+
+void *nw_malloc(size_t size)
+{
+    char *mem = (char *)malloc(size + sizeof(size_t) + sizeof(int32_t));
+    *(size_t *)mem = size;
+    char *result = mem + sizeof(size_t);
+    *(uint32_t *)(result + size) = NETWORD_MALLOC_SENTINEL;
+    return (void *)result;
+}
+
+void nw_free(void *ptr)
+{
+    char *real_ptr = (char *)ptr - sizeof(size_t);
+    size_t size = *(size_t *)real_ptr;
+    uint32_t sentinel = *(uint32_t *)(real_ptr + sizeof(size_t) + size);
+    assert(sentinel == NETWORD_MALLOC_SENTINEL);
+    free(real_ptr);
+}
+
 struct netword_t
 {
     strpool_handle this_word;
@@ -718,6 +798,14 @@ struct netword_t
     strpool_handle *related_words;
     int related_words_capacity;
     int visits;
+
+    ~netword_t()
+    {
+        if (related_words != 0)
+        {
+            nw_free(related_words);
+        }
+    }
 };
 
 struct networdpool_t
@@ -725,20 +813,44 @@ struct networdpool_t
     netword_t *words = 0;
     int words_count = 0;
     int pool_capacity = 0;
+
+    ~networdpool_t()
+    {
+        if (words != 0)
+        {
+            nw_free(words);
+        }
+    }
 };
+
+void nw_networdpool_init(networdpool_t *wordspool, int32_t pool_capacity)
+{
+    if (pool_capacity < 3)
+    {
+        pool_capacity = 3;
+    } 
+    wordspool->words = (netword_t *)nw_malloc(pool_capacity * sizeof(netword_t));
+    wordspool->pool_capacity = pool_capacity;
+    wordspool->words_count = 0;
+}
 
 netword_t *nw_make_word(networdpool_t *wordspool, const char *word, int word_length, strpool *stringpool)
 {
-    if (wordspool->words_count > wordspool->pool_capacity)
+    if (wordspool->words_count >= wordspool->pool_capacity)
     {
-        // TODO: inscreen wordspool capacity
+        int new_wordspool_capacity = wordspool->pool_capacity * 2;
+        netword_t *new_wordspool = (netword_t *)nw_malloc(new_wordspool_capacity * sizeof(netword_t));
+        memcpy((char *)new_wordspool, wordspool->words, wordspool->words_count * sizeof(netword_t));
+        nw_free(wordspool->words);
+        wordspool->words = new_wordspool;
+        wordspool->pool_capacity = new_wordspool_capacity;
     }
     netword_t *result = &wordspool->words[wordspool->words_count++];
     result->this_word = strpool_get_handle(stringpool, word, word_length);
 
     result->related_words_count = 0;
     result->related_words_capacity = 3;
-    result->related_words = (strpool_handle *)malloc(result->related_words_capacity * sizeof(strpool_handle));
+    result->related_words = (strpool_handle *)nw_malloc(result->related_words_capacity * sizeof(strpool_handle));
 
     result->visits = 1;
     return result;
@@ -748,7 +860,15 @@ void nw_add_related_word(netword_t *word, const char *related_word, int related_
 {
     if (word->related_words_count > word->related_words_capacity)
     {
-        // TODO: inscrease related words capacity
+        int new_related_words_capacity = word->related_words_capacity * 2;
+        strpool_handle *new_related_words = (strpool_handle *)nw_malloc(new_related_words_capacity * sizeof(strpool_handle));
+        for (int i = 0; i < word->related_words_count; ++i)
+        {
+            new_related_words[i] = word->related_words[i];
+        }
+        nw_free(word->related_words);
+        word->related_words = new_related_words;
+        word->related_words_capacity = new_related_words_capacity;
     }
     word->related_words[word->related_words_count++] = strpool_get_handle(stringpool, related_word, related_word_length);
 }
@@ -1091,7 +1211,7 @@ void nw_json_write_int32(char *json_buffer, size_t &json_buffer_pos, int n)
     }
 }
 
-void nw_json_write(networdpool_t *wordspool, char *json_buffer, size_t json_buffer_size, strpool *stringpool)
+int nw_json_write(networdpool_t *wordspool, char *json_buffer, size_t json_buffer_size, strpool *stringpool)
 {
     static const char key_str_word[5] = "word";
     static const char key_str_relatives[10] = "relatives";
@@ -1160,13 +1280,140 @@ void nw_json_write(networdpool_t *wordspool, char *json_buffer, size_t json_buff
     json_buffer[json_buffer_pos++] = ']';
     json_buffer[json_buffer_pos++] = '\0';
 
-    assert(json_buffer_pos < json_buffer_size);
+    if (json_buffer_pos < json_buffer_size)
+    {
+        return 0;
+    }
+    else
+    {
+        // If we come here, json_buffer is already overflown, need a better way
+        // to handle this.
+        return 1;
+    }
 }
 
 
 /*============================
     Command Line Loop
 ============================*/
+
+size_t nw_calc_json_buffer_size(networdpool_t *wordspool, strpool *stringpool)
+{
+    // approximation, + 1 for '\n'
+    size_t word_line_size = 18 + 1;
+    size_t relatives_line_size = 25 + 1;
+    size_t visits_line_size = 23 + 1;
+    size_t open_brace_line = 5 + 1;
+    size_t close_brace_line = 6 + 1;
+
+    size_t result = (word_line_size + relatives_line_size + visits_line_size + 
+                      open_brace_line + close_brace_line) * wordspool->words_count;
+
+    for (int i = 0; i < wordspool->words_count; ++i)
+    {
+        netword_t *word = wordspool->words + i;
+
+        int32_t word_length = 0; 
+        strpool_get_string(stringpool, word->this_word, &word_length);
+        word_length += 2;
+        result += word_length;
+
+        for (int j = 0; j < word->related_words_count; ++j)
+        {
+            strpool_handle relative = word->related_words[j];
+            int32_t relative_length = 0;
+            strpool_get_string(stringpool, relative, &relative_length);
+            relative_length += 3;
+            result += relative_length;
+        }
+    }
+
+    result += 2; // outer most array bracketsk
+    result = result + result / 4; // to be safe
+
+    return result;
+}
+
+/**
+ * 
+ */
+int nw_save(networdpool_t *wordspool, strpool *stringpool)
+{
+    static const char *netword_filename = "networds.json";
+    size_t netword_filename_length = lt_str_length(netword_filename);
+
+    const size_t backup_filename_size = 128;
+    char backup_filename[backup_filename_size];
+    bool backup_made = false;
+
+    FILE *netword_file = 0;
+    fopen_s(&netword_file, netword_filename, "r");
+    if (netword_file)
+    {
+        /* If the file already exits, don't just overwrite it, instead change 
+         * its name and we will write to a new file with that name. */
+
+        fclose(netword_file);
+        netword_file = 0;
+
+        const size_t seconds_str_size = 64;
+        char seconds_str[seconds_str_size];
+        size_t seconds_str_pos = seconds_str_size - 1;
+        seconds_str[0] = '_';
+
+        size_t seconds = (size_t)time(NULL);
+        do
+        {
+            uint32_t d = seconds % 10;
+            seconds_str[seconds_str_pos] = '0' + d;
+            seconds_str_pos--;
+            seconds /= 10;
+        } while (seconds > 0);
+
+        size_t seconds_digit_num = seconds_str_size - seconds_str_pos - 1;
+
+        for (size_t j = 1, i = seconds_str_pos + 1; i < seconds_str_size; ++j, ++i)
+        {
+            seconds_str[j] = seconds_str[i];
+        }
+
+        lt_str_concat(netword_filename, netword_filename_length, 
+                      seconds_str, seconds_digit_num + 1,
+                      backup_filename, backup_filename_size);
+
+        int err = rename(netword_filename, backup_filename);
+        if (err)
+        {
+            return 1;
+        }
+        backup_made = true;
+    }
+
+    size_t json_write_buffer_size = nw_calc_json_buffer_size(wordspool, stringpool);
+    char *json_write_buffer = (char *)nw_malloc(json_write_buffer_size);
+    int write_err = nw_json_write(wordspool, json_write_buffer, json_write_buffer_size, stringpool);
+
+    if (write_err == 0)
+    {
+        fopen_s(&netword_file, netword_filename, "w");
+        if (netword_file)
+        {
+            fprintf(netword_file, json_write_buffer);
+            fclose(netword_file);
+        }
+        else
+        {
+            // TODO: log
+            if (backup_made)
+            {
+                rename(backup_filename, netword_filename);
+            }
+            return 1;
+        }
+    }
+
+    return 0;
+}
 
 void nw_skip_whitespace(const char *cmdline, size_t cmdline_length, size_t &cmdline_pos)
 {
@@ -1193,77 +1440,104 @@ struct nw_cmdl_tokens
 enum nw_cmd_e
 {
     cmd_unrecognized = 0,
-    cmd_exit = 1,
-    cmd_new = 2,
-    cmd_add = 3,
-    cmd_num = 4,
+    cmd_exit,
+    cmd_new,
+    cmd_add,
+    cmd_num,
+    cmd_save,
+	cmd_count,
+};
+
+static const char *nw_cmd_strings[nw_cmd_e::cmd_count] = {
+    "unrecognized",
+    "exit",
+    "new",
+    "add",
+    "num",
+    "save"
 };
 
 /**
- * Convert command arguments (not command itself) to string tokens and return 
- * the command type.
+ * Create tokens from a comand line string. 
  */
-nw_cmd_e nw_cmdl_tokenize(const char *cmdline, int cmdline_length, nw_cmdl_tokens *tokens)
+void nw_cmdl_tokenize(const char *cmdline, int cmdline_length, nw_cmdl_tokens &tokens)
 {
-    nw_cmd_e nw_cmd = nw_cmd_e::cmd_unrecognized;
 	size_t cmdline_pos = 0;
-    if (lt_str_ncompare(cmdline, "exit", 4) == 0)
-    {
-        return nw_cmd_e::cmd_exit;
-    }
-    else if (lt_str_ncompare(cmdline, "nw ", 3) != 0)
-    {
-        return nw_cmd_e::cmd_unrecognized;
-    }
-    cmdline_pos += 3;
-    nw_skip_whitespace(cmdline, cmdline_length, cmdline_pos);
-    if (lt_str_ncompare(cmdline + cmdline_pos, "new ", 4) == 0)
-    {
-        nw_cmd = nw_cmd_e::cmd_new;
-        cmdline_pos += 4;
-    }
-    else if (lt_str_ncompare(cmdline + cmdline_pos, "add ", 4) == 0)
-    {
-        nw_cmd = nw_cmd_e::cmd_add;
-        cmdline_pos += 4;
-    }
-    else if (lt_str_ncompare(cmdline + cmdline_pos, "num ", 4) == 0)
-    {
-        nw_cmd = nw_cmd_e::cmd_num;
-        cmdline_pos += 4;
-    }
-    else
-    {
-        return nw_cmd_e::cmd_unrecognized;
-    }
-    while(1)
+
+    while (1)
     {
         nw_skip_whitespace(cmdline, cmdline_length, cmdline_pos);
+
         if (*(cmdline + cmdline_pos) == '\n' || 
             *(cmdline + cmdline_pos) == '\0' ||
             cmdline_pos >= cmdline_length)
         {
             break;
         }
-        tokens->token_start_positions[tokens->token_num] = (int)cmdline_pos;
-        while (*(cmdline + cmdline_pos) != ',' && 
-               *(cmdline + cmdline_pos) != '\n' &&
-               cmdline_pos < cmdline_length)
+
+        tokens.token_start_positions[tokens.token_num] = (int)cmdline_pos;
+        while (1)
         {
+            char c = *(cmdline + cmdline_pos);
+            if (c == ' ' || c == '\n' || c == '\t' || c == '\r' || c == '\v' ||
+                c == '\n' || c == '\0' || cmdline_pos >= cmdline_length)
+            {
+                break;
+            }
             cmdline_pos++;
         }
-        tokens->token_lengths[tokens->token_num] = (int)cmdline_pos - tokens->token_start_positions[tokens->token_num];
-        // trim whitespaces at end
-        const char *token = cmdline + tokens->token_start_positions[tokens->token_num];
-        while (*(token + tokens->token_lengths[tokens->token_num] - 1) == ' ' ||
-               *(token + tokens->token_lengths[tokens->token_num] - 1) == '\t' ||
-               *(token + tokens->token_lengths[tokens->token_num] - 1) == '\r')
-        {
-            tokens->token_lengths[tokens->token_num]--;
-        }
-        tokens->token_num++;
+        tokens.token_lengths[tokens.token_num] = (int)cmdline_pos - tokens.token_start_positions[tokens.token_num];
+        tokens.token_num++;
     }
-	return nw_cmd;
+}
+
+nw_cmd_e nw_cmdl_get_cmd(const char *cmdline, const nw_cmdl_tokens &tokens)
+{
+    if (tokens.token_num == 0)
+    {
+        return nw_cmd_e::cmd_unrecognized;
+    }
+
+    const char *nw_cmdstr = cmdline + tokens.token_start_positions[0];
+    int nw_cmdstr_length = tokens.token_lengths[0];
+
+    if (lt_str_ncompare(nw_cmdstr, nw_cmd_strings[nw_cmd_e::cmd_exit], nw_cmdstr_length) == 0)
+    {
+        return nw_cmd_e::cmd_exit;
+    }
+    else if (lt_str_ncompare(nw_cmdstr, "nw", nw_cmdstr_length) != 0)
+    {
+        return nw_cmd_e::cmd_unrecognized;
+    }
+
+    if (tokens.token_num == 1)
+    {
+        return nw_cmd_e::cmd_unrecognized;
+    }
+
+    nw_cmdstr = cmdline + tokens.token_start_positions[1];
+    nw_cmdstr_length = tokens.token_lengths[1];
+
+    if (lt_str_ncompare(nw_cmdstr, nw_cmd_strings[nw_cmd_e::cmd_new]) == 0)
+    {
+        return nw_cmd_e::cmd_new;
+    }
+    else if (lt_str_ncompare(nw_cmdstr, nw_cmd_strings[nw_cmd_e::cmd_add]) == 0)
+    {
+        return nw_cmd_e::cmd_add;
+    }
+    else if (lt_str_ncompare(nw_cmdstr, nw_cmd_strings[nw_cmd_e::cmd_num]) == 0)
+    {
+        return nw_cmd_e::cmd_num;
+    }
+    else if (lt_str_ncompare(nw_cmdstr, nw_cmd_strings[nw_cmd_e::cmd_save]) == 0)
+    {
+        return nw_cmd_e::cmd_save;
+    }
+    else
+    {
+        return nw_cmd_e::cmd_unrecognized;
+    }
 }
 
 /**
@@ -1314,7 +1588,7 @@ void nw_cmdl_run()
         size_t file_length = ftell(netword_json_file);
         fseek(netword_json_file, 0, SEEK_SET);
 
-        char *json_buffer = (char *)malloc(file_length);
+        char *json_buffer = (char *)nw_malloc(file_length);
         json_buffer[file_length - 1] = '\0';
         size_t file_read_length = fread(json_buffer, 1, file_length, netword_json_file);
         if (file_read_length != file_length)
@@ -1324,7 +1598,7 @@ void nw_cmdl_run()
         fclose(netword_json_file);
 
         networdspool.pool_capacity = (int32_t)(file_read_length / 10);
-        networdspool.words = (netword_t *)malloc(networdspool.pool_capacity * sizeof(netword_t));
+        networdspool.words = (netword_t *)nw_malloc(networdspool.pool_capacity * sizeof(netword_t));
 
         int32_t stringblock_size = (int32_t)(file_read_length / 2);
         int32_t hashslot_capacity = (int32_t)(file_read_length / 6);
@@ -1336,7 +1610,7 @@ void nw_cmdl_run()
     else
     {
         networdspool.pool_capacity = 10;
-        networdspool.words = (netword_t *)malloc(networdspool.pool_capacity * sizeof(netword_t));
+        networdspool.words = (netword_t *)nw_malloc(networdspool.pool_capacity * sizeof(netword_t));
 
         int32_t stringblock_size = 40;
         int32_t hashslot_capacity = 120;
@@ -1352,9 +1626,10 @@ void nw_cmdl_run()
     while (1)
     {
         cmdline_length = nw_cmd_readline(stdin, cmdline, cmdline_max_length);
-        nw_cmd_e nw_cmd = nw_cmdl_tokenize(cmdline, cmdline_length, &cmdl_tokens);
+        nw_cmdl_tokenize(cmdline, cmdline_length, cmdl_tokens);
+        nw_cmd_e nw_command = nw_cmdl_get_cmd(cmdline, cmdl_tokens);
 
-        switch(nw_cmd)
+        switch(nw_command)
         {
             case nw_cmd_e::cmd_exit:
             {
@@ -1367,16 +1642,18 @@ void nw_cmdl_run()
                 {
                     printf("No argument following the command \'new\'\n");
                 }
-                const char *new_word = cmdline + cmdl_tokens.token_start_positions[0];
-                int new_word_length = cmdl_tokens.token_lengths[0];
-                netword_t *netword = nw_make_word(&networdspool, new_word, new_word_length, &stringpool);
-                for (int i = 1; i < cmdl_tokens.token_num; ++i)
+                else
                 {
-                    new_word = cmdline + cmdl_tokens.token_start_positions[i];
-                    new_word_length = cmdl_tokens.token_lengths[i];
-                    nw_add_related_word(netword, new_word, new_word_length, &stringpool);
+                    const char *new_word = cmdline + cmdl_tokens.token_start_positions[2];
+                    int new_word_length = cmdl_tokens.token_lengths[2];
+                    netword_t *netword = nw_make_word(&networdspool, new_word, new_word_length, &stringpool);
+                    for (int i = 3; i < cmdl_tokens.token_num; ++i)
+                    {
+                        new_word = cmdline + cmdl_tokens.token_start_positions[i];
+                        new_word_length = cmdl_tokens.token_lengths[i];
+                        nw_add_related_word(netword, new_word, new_word_length, &stringpool);
+                    }
                 }
-                printf("No argument following the command \'new\'\n");
             } break;
 
             case nw_cmd_e::cmd_add:
@@ -1387,6 +1664,18 @@ void nw_cmdl_run()
             case nw_cmd_e::cmd_num:
             {
                 printf("nw num ...\n");
+            } break;
+
+            case nw_cmd_e::cmd_save:
+            {
+                if (nw_save(&networdspool, &stringpool) == 0)
+                {
+                    printf("New netword json saved.\n");
+                }
+                else
+                {
+                    printf("Saving failed.\n");
+                }
             } break;
 
             case nw_cmd_e::cmd_unrecognized:
@@ -1431,6 +1720,8 @@ struct sit_test_node
         sit_test_registry::add_node(this);
     }
 
+	virtual ~sit_test_node() {}
+
     virtual void run() = 0;
 };
 
@@ -1458,7 +1749,7 @@ void sit_test_registry::run()
         node->run();
         node = node->next_node;
     }
-    printf("tests run: %d", node_count);
+    printf("All tests passed: %d\n\n", node_count);
 }
 
 #define SIT_TEST(test_case_name) \
@@ -1485,12 +1776,35 @@ namespace NetwordsTests
         assert(result == 0x0008);
     }
 
-    SIT_TEST(lt_str_ncompare_input_various)
+    SIT_TEST(lt_str_ncompare_test_various)
     {
         assert(lt_str_ncompare("aabb", "aabbc", 4) == 0);
         assert(lt_str_ncompare("aabb", "aabbc", 5) < 0);
         assert(lt_str_ncompare("aAbb", "aabb", 4) < 0);
         assert(lt_str_ncompare("aabc", "aabb", 4) > 0);
+        assert(lt_str_ncompare("abcd", "abcde") != 0);
+    }
+
+    SIT_TEST(lt_str_concat_test_various)
+    {
+        const int str0_size = 5;
+        char str0[str0_size] = "1234";
+
+        const int str1_size = 10;
+        char str1[str1_size] = "123456789";
+
+        const int dest_str_size = 20;
+        char dest_str[dest_str_size];
+
+        int concat_result = lt_str_concat(str0, str0_size - 1, str1, str1_size - 1, dest_str, dest_str_size);
+        assert(concat_result == 0);
+        assert(lt_str_ncompare(dest_str, "1234123456789", 13) == 0); 
+
+        concat_result = lt_str_concat(str0, str0_size - 1, str1, str1_size - 1, dest_str, 4);
+        assert(concat_result == 1);
+
+        concat_result = lt_str_concat(str0, str0_size - 1, str1, str1_size - 1, dest_str, 12);
+        assert(concat_result == 2);
     }
 
     SIT_TEST(strpool_init_test)
