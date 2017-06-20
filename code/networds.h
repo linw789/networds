@@ -5,11 +5,11 @@ todo
 
 [i] Write command line loop.
 [i] Write more unit tests for strpool.
-[ ] Fix lt_str_ncompare.
 [ ] Make right use of size_t.
 [ ] Validate command line arguments for alphabet-only strings.
 [ ] Address reference counting issue of strpool_handle.
 [ ] Add memory footprint metrics.
+[x] Fix lt_str_ncompare.
 [x] Handle memory allocation of netword_t and networdpool_t.
 [x] Make a simple stupid unit test framework that can save me from manually 
     calling every test function.
@@ -125,38 +125,18 @@ int lt_str_ncopy(char *dest, int dest_size, const char *src, int src_size = 0)
  *           ("aabb", "aabbc", 5) returns negative integer
  *           ("aAbb", "aabb", 4) returns negative integer
  */
-int lt_str_ncompare(const char *str0, const char *str1, size_t count = 0)
+int lt_str_ncompare(const char * __restrict str0, const char * __restrict str1, size_t count)
 {
-    if (count == 0)
+    while (count > 0)
     {
-        while (1)
+        if (*str0 != *str1)
         {
-            if (*str0 != *str1)
-            {
-                return *str0 - *str1;
-            }
-            if (*str0 == '\0' || *str1 == '\0')
-            {
-                return 0;
-            }
-
-            str0++;
-            str1++;
+            return *str0 - *str1;
         }
-    }
-    else
-    {
-        while (count > 0)
-        {
-            if (*str0 != *str1)
-            {
-                return *str0 - *str1;
-            }
 
-            str0++;
-            str1++;
-            count--;
-        }
+        str0++;
+        str1++;
+        count--;
     }
     return 0;
 }
@@ -164,32 +144,34 @@ int lt_str_ncompare(const char *str0, const char *str1, size_t count = 0)
 /**
  *
  */
-int lt_str_concat(const char *str0, size_t str0_size, const char *str1, size_t str1_size, char *dest_str, size_t dest_str_size)
+int lt_str_concat(const char * __restrict str0, size_t str0_size,
+                  const char * __restrict str1, size_t str1_size, 
+                  char * __restrict dest_buffer, size_t dest_buffer_size)
 {
     size_t pos0 = 0;
     size_t pos1 = 0;
     size_t dest_pos = 0;
     while (pos0 < str0_size)
     {
-        if (dest_pos >= dest_str_size - 1)
+        if (dest_pos >= dest_buffer_size - 1)
         {
-            dest_str[dest_pos] = '\0';
+            dest_buffer[dest_pos] = '\0';
             return 1;
         }
-        dest_str[dest_pos++] = str0[pos0++];
+        dest_buffer[dest_pos++] = str0[pos0++];
     }
 
     while (pos1 < str1_size)
     {
-        if (dest_pos >= dest_str_size - 1)
+        if (dest_pos >= dest_buffer_size - 1)
         {
-            dest_str[dest_pos] = '\0';
+            dest_buffer[dest_pos] = '\0';
             return 2;
         }
-        dest_str[dest_pos++] = str1[pos1++];
+        dest_buffer[dest_pos++] = str1[pos1++];
     }
 
-    dest_str[dest_pos] = '\0';
+    dest_buffer[dest_pos] = '\0';
 
     return 0;
 }
@@ -1356,6 +1338,8 @@ int nw_save(networdpool_t *wordspool, strpool *stringpool)
         fclose(netword_file);
         netword_file = 0;
 
+        /* Compute backup file name, something like networds_epochseconds.json */
+
         const size_t seconds_str_size = 64;
         char seconds_str[seconds_str_size];
         size_t seconds_str_pos = seconds_str_size - 1;
@@ -1377,8 +1361,14 @@ int nw_save(networdpool_t *wordspool, strpool *stringpool)
             seconds_str[j] = seconds_str[i];
         }
 
-        lt_str_concat(netword_filename, netword_filename_length, 
+        char backup_filename_no_ext[backup_filename_size];
+
+        lt_str_concat(netword_filename, netword_filename_length - 5, 
                       seconds_str, seconds_digit_num + 1,
+                      backup_filename_no_ext, backup_filename_size);
+
+        lt_str_concat(backup_filename_no_ext, netword_filename_length - 5 + seconds_digit_num + 1,
+                      ".json", 5, 
                       backup_filename, backup_filename_size);
 
         int err = rename(netword_filename, backup_filename);
@@ -1399,6 +1389,7 @@ int nw_save(networdpool_t *wordspool, strpool *stringpool)
         if (netword_file)
         {
             fprintf(netword_file, json_write_buffer);
+            nw_free(json_write_buffer);
             fclose(netword_file);
         }
         else
@@ -1518,19 +1509,23 @@ nw_cmd_e nw_cmdl_get_cmd(const char *cmdline, const nw_cmdl_tokens &tokens)
     nw_cmdstr = cmdline + tokens.token_start_positions[1];
     nw_cmdstr_length = tokens.token_lengths[1];
 
-    if (lt_str_ncompare(nw_cmdstr, nw_cmd_strings[nw_cmd_e::cmd_new]) == 0)
+    if (nw_cmdstr_length == lt_str_length(nw_cmd_strings[nw_cmd_e::cmd_new]) && 
+        lt_str_ncompare(nw_cmdstr, nw_cmd_strings[nw_cmd_e::cmd_new], nw_cmdstr_length) == 0)
     {
         return nw_cmd_e::cmd_new;
     }
-    else if (lt_str_ncompare(nw_cmdstr, nw_cmd_strings[nw_cmd_e::cmd_add]) == 0)
+    else if (nw_cmdstr_length == lt_str_length(nw_cmd_strings[nw_cmd_e::cmd_add]) && 
+             lt_str_ncompare(nw_cmdstr, nw_cmd_strings[nw_cmd_e::cmd_add], nw_cmdstr_length) == 0)
     {
         return nw_cmd_e::cmd_add;
     }
-    else if (lt_str_ncompare(nw_cmdstr, nw_cmd_strings[nw_cmd_e::cmd_num]) == 0)
+    else if (nw_cmdstr_length == lt_str_length(nw_cmd_strings[nw_cmd_e::cmd_num]) && 
+             lt_str_ncompare(nw_cmdstr, nw_cmd_strings[nw_cmd_e::cmd_num], nw_cmdstr_length) == 0)
     {
         return nw_cmd_e::cmd_num;
     }
-    else if (lt_str_ncompare(nw_cmdstr, nw_cmd_strings[nw_cmd_e::cmd_save]) == 0)
+    else if (nw_cmdstr_length == lt_str_length(nw_cmd_strings[nw_cmd_e::cmd_save]) && 
+             lt_str_ncompare(nw_cmdstr, nw_cmd_strings[nw_cmd_e::cmd_save], nw_cmdstr_length) == 0)
     {
         return nw_cmd_e::cmd_save;
     }
@@ -1782,7 +1777,6 @@ namespace NetwordsTests
         assert(lt_str_ncompare("aabb", "aabbc", 5) < 0);
         assert(lt_str_ncompare("aAbb", "aabb", 4) < 0);
         assert(lt_str_ncompare("aabc", "aabb", 4) > 0);
-        assert(lt_str_ncompare("abcd", "abcde") != 0);
     }
 
     SIT_TEST(lt_str_concat_test_various)
@@ -1793,17 +1787,19 @@ namespace NetwordsTests
         const int str1_size = 10;
         char str1[str1_size] = "123456789";
 
-        const int dest_str_size = 20;
-        char dest_str[dest_str_size];
+        const int dest_buffer_size = 20;
+        char dest_buffer[dest_buffer_size];
 
-        int concat_result = lt_str_concat(str0, str0_size - 1, str1, str1_size - 1, dest_str, dest_str_size);
+        int concat_result = lt_str_concat(str0, str0_size - 1, str1, str1_size - 1, dest_buffer, dest_buffer_size);
         assert(concat_result == 0);
-        assert(lt_str_ncompare(dest_str, "1234123456789", 13) == 0); 
+        int dest_string_length = lt_str_length(dest_buffer);
+        assert(dest_string_length == 13);
+        assert(lt_str_ncompare(dest_buffer, "1234123456789", dest_string_length) == 0); 
 
-        concat_result = lt_str_concat(str0, str0_size - 1, str1, str1_size - 1, dest_str, 4);
+        concat_result = lt_str_concat(str0, str0_size - 1, str1, str1_size - 1, dest_buffer, 4);
         assert(concat_result == 1);
 
-        concat_result = lt_str_concat(str0, str0_size - 1, str1, str1_size - 1, dest_str, 12);
+        concat_result = lt_str_concat(str0, str0_size - 1, str1, str1_size - 1, dest_buffer, 12);
         assert(concat_result == 2);
     }
 
