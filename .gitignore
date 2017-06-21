@@ -1,6 +1,7 @@
 
 *~
 *.sdf
+networds_*.json
 
 /Debug/
 /.vs/

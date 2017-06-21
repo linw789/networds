@@ -1,0 +1,82 @@
+[
+    {
+        "word" : "antithetical",
+        "relatives" : ["opposite"],
+        "visits" : 1
+    },
+    {
+        "word" : "chicanery",
+        "relatives" : ["underhanded", "shenanigans"],
+        "visits" : 1
+    },
+    {
+        "word" : "eponymous",
+        "relatives" : [],
+        "visits" : 1
+    },
+    {
+        "word" : "premonition",
+        "relatives" : [],
+        "visits" : 1
+    },
+    {
+        "word" : "put up a front",
+        "relatives" : ["fake"],
+        "visits" : 1
+    },
+    {
+        "word" : "have a row with someone",
+        "relatives" : [],
+        "visits" : 1
+    },
+    {
+        "word" : "by and large",
+        "relatives" : [],
+        "visits" : 1
+    },
+    {
+        "word" : "delectable",
+        "relatives" : ["good"],
+        "visits" : 1
+    },
+    {
+        "word" : "acerbic",
+        "relatives" : ["harsh"],
+        "visits" : 1
+    },
+    {
+        "word" : "verbatim",
+        "relatives" : [],
+        "visits" : 1
+    },
+    {
+        "word" : "didactic",
+        "relatives" : ["teach"],
+        "visits" : 1
+    },
+    {
+        "word" : "turpitude",
+        "relatives" : ["moral", "corrupt"],
+        "visits" : 1
+    },
+    {
+        "word" : "brethren",
+        "relatives" : ["brother"],
+        "visits" : 1
+    },
+    {
+        "word" : "iconoclast",
+        "relatives" : ["disbelief"],
+        "visits" : 1
+    },
+    {
+        "word" : "peter",
+        "relatives" : ["out"],
+        "visits" : 1
+    },
+    {
+        "word" : "perfunctory",
+        "relatives" : ["useless"],
+        "visits" : 1
+    }
+]
