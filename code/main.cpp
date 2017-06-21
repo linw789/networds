@@ -10,7 +10,7 @@
 
 int main(int argc, char *argv)
 {
-    sit_test_registry::run();
+    sit_test_registry_t::run();
 
 #if 0
     FILE *file = 0;
@@ -37,7 +37,7 @@ int main(int argc, char *argv)
         wordspool.pool_capacity = 10;
         wordspool.words = (netword_t *)malloc(wordspool.pool_capacity * sizeof(netword_t));
 
-        strpool stringpool;
+        strpool_t stringpool;
         strpool_init(&stringpool, 300, 20, 20);
 
         nw_json_read(test_json_str, file_read_length, &wordspool, &stringpool);
