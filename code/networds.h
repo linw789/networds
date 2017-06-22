@@ -514,11 +514,14 @@ int32_t strpool_store_string(strpool_t *pool, const char *string, int str_length
 }
 
 /**
- * Return the handle to the string if it already exists in the string pool, otherwise
- * inject the string into the string pool and return the handle.
+ * Return the handle to the string if it already exists in the string pool, 
+ * otherwise inject the string into the string pool and return the handle.
  * @param input_string The input string doesn't need to be null-terminated.
+ * @param input_str_length The length of \ref input_string.
+ * @param add_if_new If true add the \ref input_string to the string pool, else 
+ *        return invalid strpool_handle_t.
  */
-strpool_handle_t strpool_get_handle(strpool_t *pool, const char *input_string, int input_str_length)
+strpool_handle_t strpool_get_handle(strpool_t *pool, const char *input_string, int input_str_length, bool add_if_new)
 {
     uint32_t current_hash = strpool_calc_string_hash(input_string, input_str_length);
     uint32_t base_slot_index = current_hash % (uint32_t)pool->hashslot_capacity;
@@ -567,6 +570,12 @@ strpool_handle_t strpool_get_handle(strpool_t *pool, const char *input_string, i
         }
 
         slot_index = (slot_index + 1) % (uint32_t)pool->hashslot_capacity;
+    }
+
+    if (!add_if_new)
+    {
+        strpool_handle_t result = {0};
+        return result;
     }
 
     /*
@@ -829,7 +838,7 @@ netword_t *nw_make_word(networdpool_t *wordspool, const char *word, int word_len
         wordspool->pool_capacity = new_wordspool_capacity;
     }
     netword_t *result = &wordspool->words[wordspool->words_count++];
-    result->this_word = strpool_get_handle(stringpool, word, word_length);
+    result->this_word = strpool_get_handle(stringpool, word, word_length, true);
 
     result->related_words_count = 0;
     result->related_words_capacity = 3;
@@ -854,7 +863,7 @@ void nw_add_related_word(netword_t *word, const char *related_word, int related_
         word->related_words = new_related_words;
         word->related_words_capacity = new_related_words_capacity;
     }
-    word->related_words[word->related_words_count++] = strpool_get_handle(stringpool, related_word, related_word_length);
+    word->related_words[word->related_words_count++] = strpool_get_handle(stringpool, related_word, related_word_length, true);
 }
 
 /*========================
@@ -1892,7 +1901,7 @@ namespace NetwordsTests
         strpool_t pool;
         strpool_init(&pool, 100, 20, 20);
 
-        strpool_handle_t handle = strpool_get_handle(&pool, test_str0, lt_str_length(test_str0));
+        strpool_handle_t handle = strpool_get_handle(&pool, test_str0, lt_str_length(test_str0), true);
         const char *result_str0 = strpool_get_string(&pool, handle);
         assert(lt_str_ncompare(test_str0, result_str0, lt_str_length(result_str0)) == 0);
     }
@@ -1904,8 +1913,8 @@ namespace NetwordsTests
         strpool_t pool;
         strpool_init(&pool, 100, 20, 20);
 
-        strpool_handle_t handle0 = strpool_get_handle(&pool, test_str0, lt_str_length(test_str0));
-        strpool_handle_t handle1 = strpool_get_handle(&pool, test_str0, lt_str_length(test_str0));
+        strpool_handle_t handle0 = strpool_get_handle(&pool, test_str0, lt_str_length(test_str0), true);
+        strpool_handle_t handle1 = strpool_get_handle(&pool, test_str0, lt_str_length(test_str0), true);
 		assert(handle0 == handle1);
 
         const char *result_str1 = strpool_get_string(&pool, handle1);
@@ -1919,7 +1928,7 @@ namespace NetwordsTests
         strpool_t pool;
         strpool_init(&pool, 32, 10, 5);
 
-        strpool_handle_t handle = strpool_get_handle(&pool, test_str0, lt_str_length(test_str0));
+        strpool_handle_t handle = strpool_get_handle(&pool, test_str0, lt_str_length(test_str0), true);
         const char *result_str0 = strpool_get_string(&pool, handle);
         assert(lt_str_ncompare(test_str0, result_str0, lt_str_length(result_str0)) == 0);
     }
@@ -1930,11 +1939,11 @@ namespace NetwordsTests
         strpool_init(&pool, 64, 10, 2);
         
         const char *str0 = "antithetical";
-        strpool_handle_t handle0 = strpool_get_handle(&pool, str0, lt_str_length(str0));
+        strpool_handle_t handle0 = strpool_get_handle(&pool, str0, lt_str_length(str0), true);
         const char *str1 = "chicanery";
-        strpool_handle_t handle1 = strpool_get_handle(&pool, str1, lt_str_length(str1));
+        strpool_handle_t handle1 = strpool_get_handle(&pool, str1, lt_str_length(str1), true);
         const char *str2 = "on the up and up";
-        strpool_handle_t handle2 = strpool_get_handle(&pool, str2, lt_str_length(str2));
+        strpool_handle_t handle2 = strpool_get_handle(&pool, str2, lt_str_length(str2), true);
 
         assert(lt_str_ncompare(strpool_get_string(&pool, handle0), str0, lt_str_length(str0)) == 0);
         assert(lt_str_ncompare(strpool_get_string(&pool, handle1), str1, lt_str_length(str1)) == 0);
@@ -1950,11 +1959,11 @@ namespace NetwordsTests
         strpool_init(&pool, 64, 3, 10);
         
         const char *str0 = "antithetical";
-        strpool_handle_t handle0 = strpool_get_handle(&pool, str0, lt_str_length(str0));
+        strpool_handle_t handle0 = strpool_get_handle(&pool, str0, lt_str_length(str0), true);
         const char *str1 = "chicanery";
-        strpool_handle_t handle1 = strpool_get_handle(&pool, str1, lt_str_length(str1));
+        strpool_handle_t handle1 = strpool_get_handle(&pool, str1, lt_str_length(str1), true);
         const char *str2 = "on the up and up";
-        strpool_handle_t handle2 = strpool_get_handle(&pool, str2, lt_str_length(str2));
+        strpool_handle_t handle2 = strpool_get_handle(&pool, str2, lt_str_length(str2), true);
 
         assert(lt_str_ncompare(strpool_get_string(&pool, handle0), str0, lt_str_length(str0)) == 0);
         assert(lt_str_ncompare(strpool_get_string(&pool, handle1), str1, lt_str_length(str1)) == 0);
@@ -1976,8 +1985,8 @@ namespace NetwordsTests
         strpool_t pool;
         strpool_init(&pool, 100, 20, 20);
 
-        strpool_handle_t handle0 = strpool_get_handle(&pool, test_str0, lt_str_length(test_str0));
-        strpool_handle_t handle1 = strpool_get_handle(&pool, test_str1, lt_str_length(test_str1));
+        strpool_handle_t handle0 = strpool_get_handle(&pool, test_str0, lt_str_length(test_str0), true);
+        strpool_handle_t handle1 = strpool_get_handle(&pool, test_str1, lt_str_length(test_str1), true);
         assert(handle0 != handle1);
 
         const strpool_entry_t &entry0 = pool.entries[handle0.entry_index];
@@ -1996,13 +2005,13 @@ namespace NetwordsTests
         strpool_init(&pool, 64, 4, 10);
         
         const char *str0 = "antithetical";
-        strpool_handle_t handle0 = strpool_get_handle(&pool, str0, lt_str_length(str0));
+        strpool_handle_t handle0 = strpool_get_handle(&pool, str0, lt_str_length(str0), true);
         const char *str1 = "chicanery";
-        strpool_handle_t handle1 = strpool_get_handle(&pool, str1, lt_str_length(str1));
+        strpool_handle_t handle1 = strpool_get_handle(&pool, str1, lt_str_length(str1), true);
         const char *str2 = "on the up and up";
-        strpool_handle_t handle2 = strpool_get_handle(&pool, str2, lt_str_length(str2));
+        strpool_handle_t handle2 = strpool_get_handle(&pool, str2, lt_str_length(str2), true);
         const char *str3 = "eponymous";
-        strpool_handle_t handle3 = strpool_get_handle(&pool, str3, lt_str_length(str2));
+        strpool_handle_t handle3 = strpool_get_handle(&pool, str3, lt_str_length(str2), true);
 
         const char *result_str0 = strpool_get_string(&pool, handle0); 
         assert(lt_str_ncompare(result_str0, str0, lt_str_length(str0)) == 0);
@@ -2028,13 +2037,13 @@ namespace NetwordsTests
         strpool_init(&pool, 64, 4, 10);
         
         const char *str0 = "antithetical";
-        strpool_handle_t handle0 = strpool_get_handle(&pool, str0, lt_str_length(str0));
+        strpool_handle_t handle0 = strpool_get_handle(&pool, str0, lt_str_length(str0), true);
         const char *str1 = "chicanery";
-        strpool_handle_t handle1 = strpool_get_handle(&pool, str1, lt_str_length(str1));
+        strpool_handle_t handle1 = strpool_get_handle(&pool, str1, lt_str_length(str1), true);
         const char *str2 = "on the up and up";
-        strpool_handle_t handle2 = strpool_get_handle(&pool, str2, lt_str_length(str2));
+        strpool_handle_t handle2 = strpool_get_handle(&pool, str2, lt_str_length(str2), true);
         const char *str3 = "on the up and up";
-        strpool_handle_t handle3 = strpool_get_handle(&pool, str3, lt_str_length(str2));
+        strpool_handle_t handle3 = strpool_get_handle(&pool, str3, lt_str_length(str2), true);
 
         const char *result_str0 = strpool_get_string(&pool, handle0); 
         assert(lt_str_ncompare(result_str0, str0, lt_str_length(str0)) == 0);
@@ -2071,7 +2080,7 @@ namespace NetwordsTests
 
         for (int i = 0; i < n; ++i)
         {
-            handles[i] = strpool_get_handle(&pool, strings[i], lt_str_length(strings[i]));
+            handles[i] = strpool_get_handle(&pool, strings[i], lt_str_length(strings[i]), true);
         }
 
         strpool_string_node_t *dummy_node = strpool_get_string_node(&pool, pool.dummy_node_offset);
