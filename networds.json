@@ -70,13 +70,18 @@
         "visits" : 1
     },
     {
-        "word" : "peter",
-        "relatives" : ["out"],
+        "word" : "peter out",
+        "relatives" : [],
         "visits" : 1
     },
     {
         "word" : "perfunctory",
         "relatives" : ["useless"],
+        "visits" : 1
+    },
+    {
+        "word" : "jaundice",
+        "relatives" : ["disease", "yellow"],
         "visits" : 1
     }
 ]
