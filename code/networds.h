@@ -91,16 +91,11 @@ int lt_str_length(const char *str)
  * @param src_size The number of character to copy from the source buffer.
  * @return The number of characters copied, excluding '\0'. 
  */
-int lt_str_ncopy(char *dest, int dest_size, const char *src, int src_size = 0)
+int lt_str_ncopy(char *dest, int dest_size, const char *src, int src_size)
 {
     int dest_pos = 0;
     int dest_end = dest_size - 1;
     int src_pos = 0;
-
-    if (src_size == 0)
-    {
-        src_size = lt_str_length(src);
-    }
 
     while (*(src + src_pos) != '\0' && 
             src_pos < src_size &&
@@ -886,7 +881,7 @@ const char *nw_json_error(const char *errmsg)
     static char error_msg[error_msg_size];
     if (errmsg != 0)
     {
-        lt_str_ncopy(error_msg, error_msg_size, errmsg);
+        lt_str_ncopy(error_msg, error_msg_size, errmsg, lt_str_length(errmsg));
         assert(false);
     }
     return error_msg;
