@@ -83,5 +83,20 @@
         "word" : "jaundice",
         "relatives" : ["disease", "yellow"],
         "visits" : 1
+    },
+    {
+        "word" : "perjury",
+        "relatives" : ["law", "untruth"],
+        "visits" : 1
+    },
+    {
+        "word" : "statute",
+        "relatives" : ["law"],
+        "visits" : 1
+    },
+    {
+        "word" : "hapless",
+        "relatives" : ["unfortunate"],
+        "visits" : 1
     }
 ]

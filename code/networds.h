@@ -3,12 +3,13 @@
 todo
 [ ] : to start  [x] : complete  [i] : in progress  [w] : won't do
 
-[i] Write command line loop.
+[ ] Add functionality for adding/removing related words.
 [i] Write more unit tests for strpool_t.
 [ ] Make right use of size_t.
 [ ] Validate command line arguments for alphabet-only strings.
 [ ] Address reference counting issue of strpool_handle_t.
 [ ] Add memory footprint metrics.
+[x] Write command line loop.
 [x] Fix lt_str_ncompare.
 [x] Handle memory allocation of netword_t and networdpool_t.
 [x] Make a simple stupid unit test framework that can save me from manually 
@@ -26,6 +27,7 @@ todo
 
 #include <assert.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h> // memcmp, memcpy
 #include <time.h>
@@ -548,27 +550,28 @@ strpool_handle_t strpool_get_handle(strpool_t &pool, const char *input_string, i
         }
 
         uint32_t slot_hash_base_index = slot_hash % (uint32_t)pool.hashslot_capacity;
-        if (slot_hash_base_index != base_slot_index)
-        {
-            // The hash key of the current slot being tested is associated with 
-            // a different base slot.
-            continue;
-        }
-        base_count--;
 
-        // Two different hash keys could be assigned to the same base slot, 
-        // for example, hash_1 = pool.hashslot_size and hash_2 = 2 * pool.hashslot_size.
-        if (slot_hash == current_hash)
-        {
-            strpool_entry_t &entry = pool.entries[slot.entry_index];
-			char *string_data = pool.string_block + entry.string_data_offset;
-            if (memcmp(string_data, input_string, input_str_length) == 0)
-            {
-                entry.ref_count++;
-                strpool_handle_t result = {slot.entry_index};
-                return result;
-            }
-        }
+		// If base_hash_base_index is not equal to base_slot_index, we know the
+		// hashslot at current slot_index is occupied by a hash that has a different
+		// base_slot than the hash of the input_string does. So we skip it.
+		if (slot_hash_base_index == base_slot_index)
+		{
+			base_count--;
+
+			// Two different hash keys could be assigned to the same base slot, 
+			// for example, hash_1 = pool.hashslot_size and hash_2 = 2 * pool.hashslot_size.
+			if (slot_hash == current_hash)
+			{
+				strpool_entry_t &entry = pool.entries[slot.entry_index];
+				char *string_data = pool.string_block + entry.string_data_offset;
+				if (memcmp(string_data, input_string, input_str_length) == 0)
+				{
+					entry.ref_count++;
+					strpool_handle_t result = { slot.entry_index };
+					return result;
+				}
+			}
+		}
 
         slot_index = (slot_index + 1) % (uint32_t)pool.hashslot_capacity;
     }
@@ -1701,6 +1704,7 @@ void nw_cmdl_run()
     }
     else
     {
+        printf("No existing networds.json file found.\n\n");
         nw_networdpool_init(networdpool, 10, 256, 16,10);
     }
 
