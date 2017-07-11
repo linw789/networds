@@ -248,12 +248,12 @@ struct strpool_handle_t
 
     bool operator==(const strpool_handle_t other)
     {
-        return entry_index == other.entry_index;
+        return (entry_index == other.entry_index);
     }
 
     bool operator!=(const strpool_handle_t other)
     {
-        return entry_index != other.entry_index;
+        return (entry_index != other.entry_index);
     }
 };
 
@@ -874,6 +874,24 @@ void nw_add_related_word(netword_t *word, const char *related_word, int related_
     word->related_words[word->related_words_count++] = strpool_get_handle(stringpool, related_word, related_word_length, true);
 }
 
+netword_t *nw_search_word(networdpool_t &networdpool, const char *str, int str_length)
+{
+    netword_t *word = 0;
+    strpool_handle_t handle = strpool_get_handle(networdpool.strpool, str, str_length, false);
+    if (handle.entry_index != 0)
+    {
+        for (int i = 0; i < networdpool.words_count; ++i)
+        {
+            word = &networdpool.words[i];
+            if (word->this_word == handle)
+            {
+                break;
+            }
+        }
+    }
+    return word;
+}
+
 /*========================
     Json Reader/Writer
 ========================*/
@@ -1474,7 +1492,7 @@ enum nw_cmd_e
     cmd_unrecognized = 0,
     cmd_exit,
     cmd_new,
-    cmd_add,
+    cmd_addr,
     cmd_stat,
     cmd_save,
 	cmd_count,
@@ -1484,7 +1502,7 @@ static const char *nw_cmd_strings[nw_cmd_e::cmd_count] = {
     "unrecognized",
     "exit",
     "new",
-    "add",
+    "addr",
     "stat",
     "save"
 };
@@ -1572,10 +1590,10 @@ nw_cmd_e nw_cmdl_get_cmd(const char *cmdline, const nw_cmdl_tokens_t &tokens)
     {
         return nw_cmd_e::cmd_new;
     }
-    else if (nw_cmdstr_length == lt_str_length(nw_cmd_strings[nw_cmd_e::cmd_add]) && 
-             lt_str_ncompare(nw_cmdstr, nw_cmd_strings[nw_cmd_e::cmd_add], nw_cmdstr_length) == 0)
+    else if (nw_cmdstr_length == lt_str_length(nw_cmd_strings[nw_cmd_e::cmd_addr]) && 
+             lt_str_ncompare(nw_cmdstr, nw_cmd_strings[nw_cmd_e::cmd_addr], nw_cmdstr_length) == 0)
     {
-        return nw_cmd_e::cmd_add;
+        return nw_cmd_e::cmd_addr;
     }
     else if (nw_cmdstr_length == lt_str_length(nw_cmd_strings[nw_cmd_e::cmd_stat]) && 
              lt_str_ncompare(nw_cmdstr, nw_cmd_strings[nw_cmd_e::cmd_stat], nw_cmdstr_length) == 0)
@@ -1628,30 +1646,51 @@ int nw_cmdl_readline(FILE *stream, char *line, int max_line_length)
     return count;
 }
 
-void nw_cmdl_execute_new(const char *cmdline, nw_cmdl_tokens_t &tokens, networdpool_t &networdpool)
+void nw_cmdl_execute_new(const char *cmdline, const nw_cmdl_tokens_t &tokens, networdpool_t &networdpool)
 {
-    if (tokens.token_num <= 2)
+    if (tokens.token_num < 2)
     {
-        printf("No argument following the command \'new\'\n");
+        printf("\nError: No argument following the command \'new\'!\n");
+        return;
     }
-    else
+
+    int arg_i = 1;
+    const char *new_word = cmdline + tokens.token_start_positions[arg_i];
+    int new_word_length = tokens.token_lengths[arg_i];
+    netword_t *netword = nw_make_word(networdpool, new_word, new_word_length);
+    for (int i = arg_i + 1; i < tokens.token_num; ++i)
     {
-        int arg_i = 1;
-        const char *new_word = cmdline + tokens.token_start_positions[arg_i];
-        int new_word_length = tokens.token_lengths[arg_i];
-        netword_t *netword = nw_make_word(networdpool, new_word, new_word_length);
-        for (int i = arg_i + 1; i < tokens.token_num; ++i)
-        {
-            new_word = cmdline + tokens.token_start_positions[i];
-            new_word_length = tokens.token_lengths[i];
-            nw_add_related_word(netword, new_word, new_word_length, networdpool.strpool);
-        }
+        new_word = cmdline + tokens.token_start_positions[i];
+        new_word_length = tokens.token_lengths[i];
+        nw_add_related_word(netword, new_word, new_word_length, networdpool.strpool);
     }
 }
 
-int nw_cmdl_execute_add()
+void nw_cmdl_execute_addr(const char *cmdline, const nw_cmdl_tokens_t &tokens, networdpool_t &networdpool)
 {
-	return 0;
+    if (tokens.token_num < 3) 
+    {
+        printf("\nError: Not enough arguments following the command \'addr\'!\n");
+        return;
+    }
+
+    int argi = 1;
+    const char *target_word = cmdline + tokens.token_start_positions[argi];
+    int target_word_length = tokens.token_lengths[argi];
+    netword_t *netword = nw_search_word(networdpool, target_word, target_word_length);
+    if (netword)
+    {
+        for (int i = argi + 1; i < tokens.token_num; ++i)
+        {
+            const char *new_related_word = cmdline + tokens.token_start_positions[i];
+            int new_related_word_length = tokens.token_lengths[i];
+            nw_add_related_word(netword, new_related_word, new_related_word_length, networdpool.strpool);
+        }
+    }
+    else
+    {
+        printf("\nError: The target word doesn't exist in the archive yet! Use command \'new\' to add it first.\n");
+    }
 }
 
 int nw_cmdl_execute_stat()
@@ -1724,9 +1763,10 @@ void nw_cmdl_run()
                 printf("\n");
             } break;
 
-            case nw_cmd_e::cmd_add:
+            case nw_cmd_e::cmd_addr:
             {
-                printf("nw add ...\n\n");
+                nw_cmdl_execute_addr(cmdline, cmdl_tokens, networdpool);
+                printf("\n");
             } break;
 
             case nw_cmd_e::cmd_stat:

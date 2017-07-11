@@ -101,7 +101,7 @@
     },
     {
         "word" : "allegory",
-        "relatives" : [],
+        "relatives" : ["hidden"],
         "visits" : 1
     },
     {
