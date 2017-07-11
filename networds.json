@@ -98,5 +98,65 @@
         "word" : "hapless",
         "relatives" : ["unfortunate"],
         "visits" : 1
+    },
+    {
+        "word" : "allegory",
+        "relatives" : [],
+        "visits" : 1
+    },
+    {
+        "word" : "indelible",
+        "relatives" : ["delete", "forget"],
+        "visits" : 1
+    },
+    {
+        "word" : "jovial",
+        "relatives" : ["friendly"],
+        "visits" : 1
+    },
+    {
+        "word" : "surreptitious",
+        "relatives" : ["secret"],
+        "visits" : 1
+    },
+    {
+        "word" : "sordid",
+        "relatives" : ["immoral", "foul"],
+        "visits" : 1
+    },
+    {
+        "word" : "lodestar",
+        "relatives" : ["guide"],
+        "visits" : 1
+    },
+    {
+        "word" : "headless",
+        "relatives" : ["careless", "attention"],
+        "visits" : 1
+    },
+    {
+        "word" : "barrel",
+        "relatives" : ["fast", "headless"],
+        "visits" : 1
+    },
+    {
+        "word" : "toe the line",
+        "relatives" : ["conform"],
+        "visits" : 1
+    },
+    {
+        "word" : "artsy fartsy",
+        "relatives" : ["art", "pretentious"],
+        "visits" : 1
+    },
+    {
+        "word" : "on the fence",
+        "relatives" : ["undecided"],
+        "visits" : 1
+    },
+    {
+        "word" : "fussilade",
+        "relatives" : ["numerous", "attack"],
+        "visits" : 1
     }
 ]

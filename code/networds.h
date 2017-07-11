@@ -1490,7 +1490,7 @@ static const char *nw_cmd_strings[nw_cmd_e::cmd_count] = {
 };
 
 /**
- * Create tokens from a comand line string. 
+ * Parse the command line string to tokens.
  */
 void nw_cmdl_tokenize(const char *cmdline, int cmdline_length, nw_cmdl_tokens_t &tokens)
 {
@@ -1523,6 +1523,11 @@ void nw_cmdl_tokenize(const char *cmdline, int cmdline_length, nw_cmdl_tokens_t 
             {
                 if (c == '\"') 
                 {
+                    break;
+                } 
+                else if (c == '\n' || c == '\0' || cmdline_pos >= cmdline_length)
+                {
+                    // TODO lw: double quote mismatch
                     break;
                 }
             }
@@ -1562,21 +1567,7 @@ nw_cmd_e nw_cmdl_get_cmd(const char *cmdline, const nw_cmdl_tokens_t &tokens)
     {
         return nw_cmd_e::cmd_exit;
     }
-    else if (nw_cmdstr_length == 2 && 
-             lt_str_ncompare(nw_cmdstr, "nw", nw_cmdstr_length) != 0)
-    {
-        return nw_cmd_e::cmd_unrecognized;
-    }
-
-    if (tokens.token_num == 1)
-    {
-        return nw_cmd_e::cmd_unrecognized;
-    }
-
-    nw_cmdstr = cmdline + tokens.token_start_positions[1];
-    nw_cmdstr_length = tokens.token_lengths[1];
-
-    if (nw_cmdstr_length == lt_str_length(nw_cmd_strings[nw_cmd_e::cmd_new]) && 
+    else if (nw_cmdstr_length == lt_str_length(nw_cmd_strings[nw_cmd_e::cmd_new]) && 
         lt_str_ncompare(nw_cmdstr, nw_cmd_strings[nw_cmd_e::cmd_new], nw_cmdstr_length) == 0)
     {
         return nw_cmd_e::cmd_new;
@@ -1645,10 +1636,11 @@ void nw_cmdl_execute_new(const char *cmdline, nw_cmdl_tokens_t &tokens, networdp
     }
     else
     {
-        const char *new_word = cmdline + tokens.token_start_positions[2];
-        int new_word_length = tokens.token_lengths[2];
+        int arg_i = 1;
+        const char *new_word = cmdline + tokens.token_start_positions[arg_i];
+        int new_word_length = tokens.token_lengths[arg_i];
         netword_t *netword = nw_make_word(networdpool, new_word, new_word_length);
-        for (int i = 3; i < tokens.token_num; ++i)
+        for (int i = arg_i + 1; i < tokens.token_num; ++i)
         {
             new_word = cmdline + tokens.token_start_positions[i];
             new_word_length = tokens.token_lengths[i];
@@ -1729,6 +1721,7 @@ void nw_cmdl_run()
             case nw_cmd_e::cmd_new:
             {
                 nw_cmdl_execute_new(cmdline, cmdl_tokens, networdpool);
+                printf("\n");
             } break;
 
             case nw_cmd_e::cmd_add:
@@ -1762,7 +1755,6 @@ void nw_cmdl_run()
         cmdl_tokens.token_num = 0;
     }
 }
-
 
 /*================
     Unit Tests
