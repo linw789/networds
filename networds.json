@@ -158,5 +158,10 @@
         "word" : "fussilade",
         "relatives" : ["numerous", "attack"],
         "visits" : 1
+    },
+    {
+        "word" : "eclectic",
+        "relatives" : ["various", "best"],
+        "visits" : 1
     }
 ]

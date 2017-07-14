@@ -23,5 +23,8 @@
     <ClInclude Include="code\networds.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="code\stb.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
 </Project>

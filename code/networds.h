@@ -32,6 +32,9 @@ todo
 #include <string.h> // memcmp, memcpy
 #include <time.h>
 
+#include "stb.h"
+
+
 /*========================
     Helper Functions
 ========================*/
@@ -789,16 +792,14 @@ void nw_free(void *ptr)
 struct netword_t
 {
     strpool_handle_t this_word;
-    int related_words_count;
-    strpool_handle_t *related_words;
-    int related_words_capacity;
+    strpool_handle_t *related_words = 0;
     int visits;
 
     ~netword_t()
     {
         if (related_words != 0)
         {
-            nw_free(related_words);
+            stb_arr_free(related_words);
         }
     }
 };
@@ -806,16 +807,14 @@ struct netword_t
 struct networdpool_t
 {
     netword_t *words = 0;
-    int words_count = 0;
     int pool_capacity = 0;
-
 	strpool_t strpool;
 
     ~networdpool_t()
     {
         if (words != 0)
         {
-            nw_free(words);
+            stb_arr_free(words);
         }
     }
 };
@@ -823,35 +822,15 @@ struct networdpool_t
 void nw_networdpool_init(networdpool_t &wordspool, int32_t wordspool_capacity, 
                          int32_t strpool_block_size, int32_t strpool_hashslot_capacity, int32_t strpool_entry_capacity)
 {
-    if (wordspool_capacity < 3)
-    {
-        wordspool_capacity = 3;
-    } 
-    wordspool.words = (netword_t *)nw_malloc(wordspool_capacity * sizeof(netword_t));
-    wordspool.pool_capacity = wordspool_capacity;
-    wordspool.words_count = 0;
-
+    stb_arr_setsize(wordspool.words, wordspool_capacity);
     strpool_init(wordspool.strpool, strpool_block_size, strpool_hashslot_capacity, strpool_entry_capacity);
 }
 
 netword_t *nw_make_word(networdpool_t &wordspool, const char *word, int word_length)
 {
-    if (wordspool.words_count >= wordspool.pool_capacity - 1)
-    {
-        int new_wordspool_capacity = wordspool.pool_capacity * 2;
-        netword_t *new_wordspool = (netword_t *)nw_malloc(new_wordspool_capacity * sizeof(netword_t));
-        memcpy((char *)new_wordspool, wordspool.words, wordspool.words_count * sizeof(netword_t));
-        nw_free(wordspool.words);
-        wordspool.words = new_wordspool;
-        wordspool.pool_capacity = new_wordspool_capacity;
-    }
-    netword_t *result = &wordspool.words[wordspool.words_count++];
+    netword_t *result = stb_arr_add(wordspool.words); 
     result->this_word = strpool_get_handle(wordspool.strpool, word, word_length, true);
-
-    result->related_words_count = 0;
-    result->related_words_capacity = 3;
-    result->related_words = (strpool_handle_t *)nw_malloc(result->related_words_capacity * sizeof(strpool_handle_t));
-
+    result->related_words = 0;
     result->visits = 1;
 
     return result;
@@ -859,30 +838,19 @@ netword_t *nw_make_word(networdpool_t &wordspool, const char *word, int word_len
 
 void nw_add_related_word(netword_t *word, const char *related_word, int related_word_length, strpool_t &stringpool)
 {
-    if (word->related_words_count >= word->related_words_capacity - 1)
-    {
-        int new_related_words_capacity = word->related_words_capacity * 2;
-        strpool_handle_t *new_related_words = (strpool_handle_t *)nw_malloc(new_related_words_capacity * sizeof(strpool_handle_t));
-        for (int i = 0; i < word->related_words_count; ++i)
-        {
-            new_related_words[i] = word->related_words[i];
-        }
-        nw_free(word->related_words);
-        word->related_words = new_related_words;
-        word->related_words_capacity = new_related_words_capacity;
-    }
-    word->related_words[word->related_words_count++] = strpool_get_handle(stringpool, related_word, related_word_length, true);
+    stb_arr_push(word->related_words, strpool_get_handle(stringpool, related_word, related_word_length, true));
 }
 
-netword_t *nw_search_word(networdpool_t &networdpool, const char *str, int str_length)
+netword_t *nw_search_word(networdpool_t &wordspool, const char *str, int str_length)
 {
     netword_t *word = 0;
-    strpool_handle_t handle = strpool_get_handle(networdpool.strpool, str, str_length, false);
+    strpool_handle_t handle = strpool_get_handle(wordspool.strpool, str, str_length, false);
     if (handle.entry_index != 0)
     {
-        for (int i = 0; i < networdpool.words_count; ++i)
+        int words_len = stb_arr_len(wordspool.words);
+        for (int i = 0; i < words_len; ++i)
         {
-            word = &networdpool.words[i];
+            word = &wordspool.words[i];
             if (word->this_word == handle)
             {
                 break;
@@ -1261,7 +1229,8 @@ int nw_json_write(networdpool_t &wordspool, char *json_buffer, size_t json_buffe
     json_buffer[json_buffer_pos++] = '[';
     json_buffer[json_buffer_pos++] = '\n';
 
-    for (int i_word = 0; i_word < wordspool.words_count; ++i_word)
+    int words_len = stb_arr_len(wordspool.words);
+    for (int i_word = 0; i_word < words_len; ++i_word)
     {
         netword_t *netword = &wordspool.words[i_word];
 
@@ -1285,11 +1254,13 @@ int nw_json_write(networdpool_t &wordspool, char *json_buffer, size_t json_buffe
         json_buffer[json_buffer_pos++] = ':';
         json_buffer[json_buffer_pos++] = ' ';
         json_buffer[json_buffer_pos++] = '[';
-        for (int j = 0; j < netword->related_words_count; ++j)
+
+        int related_words_len = stb_arr_len(netword->related_words);
+        for (int j = 0; j < related_words_len; ++j)
         {
             word = strpool_get_string(wordspool.strpool, netword->related_words[j]);
             nw_json_write_string(json_buffer, json_buffer_pos, word, lt_str_length(word));
-            if (j < netword->related_words_count - 1)
+            if (j < related_words_len - 1)
             {
                 json_buffer[json_buffer_pos++] = ',';
                 json_buffer[json_buffer_pos++] = ' ';
@@ -1310,7 +1281,7 @@ int nw_json_write(networdpool_t &wordspool, char *json_buffer, size_t json_buffe
         nw_json_write_whitespaces(json_buffer, json_buffer_pos, 4);
         json_buffer[json_buffer_pos++] = '}';
 
-        if (i_word < wordspool.words_count - 1)
+        if (i_word < words_len - 1)
         {
             json_buffer[json_buffer_pos++] = ',';
         }
@@ -1346,10 +1317,12 @@ size_t nw_calc_json_buffer_size(networdpool_t &wordspool)
     size_t open_brace_line = 5 + 1;
     size_t close_brace_line = 6 + 1;
 
-    size_t result = (word_line_size + relatives_line_size + visits_line_size + 
-                      open_brace_line + close_brace_line) * wordspool.words_count;
+    int words_len = stb_arr_len(wordspool.words);
 
-    for (int i = 0; i < wordspool.words_count; ++i)
+    size_t result = (word_line_size + relatives_line_size + visits_line_size + 
+                      open_brace_line + close_brace_line) * words_len;
+
+    for (int i = 0; i < words_len; ++i)
     {
         netword_t *word = wordspool.words + i;
 
@@ -1358,7 +1331,8 @@ size_t nw_calc_json_buffer_size(networdpool_t &wordspool)
         word_length += 2;
         result += word_length;
 
-        for (int j = 0; j < word->related_words_count; ++j)
+        int related_words_len = stb_arr_len(word->related_words);
+        for (int j = 0; j < related_words_len; ++j)
         {
             strpool_handle_t relative = word->related_words[j];
             int32_t relative_length = 0;
