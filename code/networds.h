@@ -453,11 +453,11 @@ int32_t strpool_init(strpool_t &pool, int32_t string_block_size, int32_t hashslo
     return 1;
 }
 
-int32_t strpool_store_string(strpool_t &pool, const char *string, int str_length)
+int32_t strpool_store_string(strpool_t &pool, const char *string, int str_len)
 {
     int32_t string_data_offset = -1;
 
-    int aliged_need_size = memory_align(sizeof(strpool_string_node_t) + str_length + sizeof('\0'), sizeof(size_t));
+    int aliged_need_size = memory_align(sizeof(strpool_string_node_t) + str_len + sizeof('\0'), sizeof(size_t));
     int32_t rover_offset = pool.first_free_node_offset;
     while (1)
     {
@@ -480,16 +480,16 @@ int32_t strpool_store_string(strpool_t &pool, const char *string, int str_length
         rover_offset = pool.first_free_node_offset;
     }
 
-    int32_t aligned_new_node_size = memory_align(sizeof(strpool_string_node_t)+ str_length + sizeof('\0'), sizeof(size_t));
+    int32_t aligned_new_node_size = memory_align(sizeof(strpool_string_node_t)+ str_len + sizeof('\0'), sizeof(size_t));
     strpool_string_node_t *new_node = strpool_get_string_node(pool, rover_offset);
     if (new_node->size > aliged_need_size)
     {
         string_data_offset = rover_offset + sizeof(strpool_string_node_t);
         char *string_data = (char *)new_node + sizeof(strpool_string_node_t);
         // memcpy requires restrict pointer, we assume it's safe here.
-        memcpy(string_data, string, str_length);
-        string_data[str_length] = '\0';
-        new_node->string_length = str_length;
+        memcpy(string_data, string, str_len);
+        string_data[str_len] = '\0';
+        new_node->string_length = str_len;
 
         pool.first_free_node_offset = rover_offset + new_node->size;
 
@@ -819,7 +819,7 @@ struct networdpool_t
     }
 };
 
-void nw_networdpool_init(networdpool_t &wordspool, int32_t wordspool_capacity, 
+void nw_init(networdpool_t &wordspool, int32_t wordspool_capacity, 
                          int32_t strpool_block_size, int32_t strpool_hashslot_capacity, int32_t strpool_entry_capacity)
 {
     stb_arr_setsize(wordspool.words, wordspool_capacity);
@@ -841,23 +841,44 @@ void nw_add_related_word(netword_t *word, const char *related_word, int related_
     stb_arr_push(word->related_words, strpool_get_handle(stringpool, related_word, related_word_length, true));
 }
 
-netword_t *nw_search_word(networdpool_t &wordspool, const char *str, int str_length)
+netword_t *nw_search_word(networdpool_t &wordspool, const char *str, int str_len, netword_t **related_match_list)
 {
-    netword_t *word = 0;
-    strpool_handle_t handle = strpool_get_handle(wordspool.strpool, str, str_length, false);
-    if (handle.entry_index != 0)
+    netword_t *match_word = 0;
+    strpool_handle_t target_handle = strpool_get_handle(wordspool.strpool, str, str_len, false);
+    if (target_handle.entry_index != 0)
     {
-        int words_len = stb_arr_len(wordspool.words);
-        for (int i = 0; i < words_len; ++i)
+        int words_count = stb_arr_len(wordspool.words);
+        for (int i = 0; i < words_count; ++i)
         {
-            word = &wordspool.words[i];
-            if (word->this_word == handle)
+            netword_t *word = &wordspool.words[i];
+            if (word->this_word == target_handle)
             {
-                break;
+                match_word = word;
+                if (related_match_list == 0)
+                {
+                    break;
+                }
+            }
+            if (related_match_list != 0)
+            {
+                bool has_related_match = false;
+                int related_words_count = stb_arr_len(word->related_words);
+                for (int j = 0; j < related_words_count; ++j)
+                {
+                    if (word->related_words[j] == target_handle)
+                    {
+                        has_related_match = true;
+                        break;
+                    }
+                }
+                if (has_related_match)
+                {
+                    stb_arr_push(*related_match_list, *word);
+                }
             }
         }
     }
-    return word;
+    return match_word;
 }
 
 /*========================
@@ -894,21 +915,21 @@ char nw_next_nonwhitespace(const char *str, size_t &pos)
  */
 int nw_json_skip_string(const char *json_str, size_t &pos)
 {
-    int str_length = 0;
+    int str_len = 0;
 
     while (*(json_str + pos) != '\"')
     {
         pos++;
-        str_length++;
-        if (str_length > 128)
+        str_len++;
+        if (str_len > 128)
         {
             // TODO: log string too big
-            str_length = 0;
+            str_len = 0;
             break;
         }
     }
     pos++;
-    return str_length;
+    return str_len;
 }
 
 /**
@@ -1219,18 +1240,18 @@ void nw_json_write_int32(char *json_buffer, size_t &json_buffer_pos, int n)
     }
 }
 
+static const char NW_KEY_STR_WORD[5] = "word";
+static const char NW_KEY_STR_RELATIVES[10] = "relatives";
+static const char NW_KEY_STR_VISITS[7] = "visits";
+
 int nw_json_write(networdpool_t &wordspool, char *json_buffer, size_t json_buffer_size)
 {
-    static const char key_str_word[5] = "word";
-    static const char key_str_relatives[10] = "relatives";
-    static const char key_str_visits[7] = "visits";
-
     size_t json_buffer_pos = 0;
     json_buffer[json_buffer_pos++] = '[';
     json_buffer[json_buffer_pos++] = '\n';
 
-    int words_len = stb_arr_len(wordspool.words);
-    for (int i_word = 0; i_word < words_len; ++i_word)
+    int words_count = stb_arr_len(wordspool.words);
+    for (int i_word = 0; i_word < words_count; ++i_word)
     {
         netword_t *netword = &wordspool.words[i_word];
 
@@ -1239,7 +1260,7 @@ int nw_json_write(networdpool_t &wordspool, char *json_buffer, size_t json_buffe
         json_buffer[json_buffer_pos++] = '\n';
 
         nw_json_write_whitespaces(json_buffer, json_buffer_pos, 8);
-        nw_json_write_string(json_buffer, json_buffer_pos, key_str_word, lt_str_length(key_str_word));
+        nw_json_write_string(json_buffer, json_buffer_pos, NW_KEY_STR_WORD, lt_str_length(NW_KEY_STR_WORD));
         json_buffer[json_buffer_pos++] = ' ';
         json_buffer[json_buffer_pos++] = ':';
         json_buffer[json_buffer_pos++] = ' ';
@@ -1249,18 +1270,18 @@ int nw_json_write(networdpool_t &wordspool, char *json_buffer, size_t json_buffe
         json_buffer[json_buffer_pos++] = '\n';
 
         nw_json_write_whitespaces(json_buffer, json_buffer_pos, 8);
-        nw_json_write_string(json_buffer, json_buffer_pos, key_str_relatives, lt_str_length(key_str_relatives));
+        nw_json_write_string(json_buffer, json_buffer_pos, NW_KEY_STR_RELATIVES, lt_str_length(NW_KEY_STR_RELATIVES));
         json_buffer[json_buffer_pos++] = ' ';
         json_buffer[json_buffer_pos++] = ':';
         json_buffer[json_buffer_pos++] = ' ';
         json_buffer[json_buffer_pos++] = '[';
 
-        int related_words_len = stb_arr_len(netword->related_words);
-        for (int j = 0; j < related_words_len; ++j)
+        int related_words_count = stb_arr_len(netword->related_words);
+        for (int j = 0; j < related_words_count; ++j)
         {
             word = strpool_get_string(wordspool.strpool, netword->related_words[j]);
             nw_json_write_string(json_buffer, json_buffer_pos, word, lt_str_length(word));
-            if (j < related_words_len - 1)
+            if (j < related_words_count - 1)
             {
                 json_buffer[json_buffer_pos++] = ',';
                 json_buffer[json_buffer_pos++] = ' ';
@@ -1271,7 +1292,7 @@ int nw_json_write(networdpool_t &wordspool, char *json_buffer, size_t json_buffe
         json_buffer[json_buffer_pos++] = '\n';
 
         nw_json_write_whitespaces(json_buffer, json_buffer_pos, 8);
-        nw_json_write_string(json_buffer, json_buffer_pos, key_str_visits, lt_str_length(key_str_visits));
+        nw_json_write_string(json_buffer, json_buffer_pos, NW_KEY_STR_VISITS, lt_str_length(NW_KEY_STR_VISITS));
         json_buffer[json_buffer_pos++] = ' ';
         json_buffer[json_buffer_pos++] = ':';
         json_buffer[json_buffer_pos++] = ' ';
@@ -1281,7 +1302,7 @@ int nw_json_write(networdpool_t &wordspool, char *json_buffer, size_t json_buffe
         nw_json_write_whitespaces(json_buffer, json_buffer_pos, 4);
         json_buffer[json_buffer_pos++] = '}';
 
-        if (i_word < words_len - 1)
+        if (i_word < words_count - 1)
         {
             json_buffer[json_buffer_pos++] = ',';
         }
@@ -1303,6 +1324,45 @@ int nw_json_write(networdpool_t &wordspool, char *json_buffer, size_t json_buffe
     }
 }
 
+void nw_write_word(netword_t *word, char *buffer, size_t buffer_size, networdpool_t &wordspool)
+{
+    size_t buffer_pos = 0;
+    // nw_json_write_string(buffer, buffer_pos, NW_KEY_STR_WORD, sizeof(NW_KEY_STR_WORD) - 1);
+    nw_json_write_string(buffer, buffer_pos, NW_KEY_STR_WORD, lt_str_length(NW_KEY_STR_WORD));
+    buffer[buffer_pos++] = ' ';
+    buffer[buffer_pos++] = ':';
+    buffer[buffer_pos++] = ' ';
+    const char *word_str = strpool_get_string(wordspool.strpool, word->this_word);
+    nw_json_write_string(buffer, buffer_pos, word_str, lt_str_length(word_str));
+    buffer[buffer_pos++] = '\n';
+
+    nw_json_write_string(buffer, buffer_pos, NW_KEY_STR_RELATIVES, lt_str_length(NW_KEY_STR_RELATIVES));
+    buffer[buffer_pos++] = ' ';
+    buffer[buffer_pos++] = ':';
+    buffer[buffer_pos++] = ' ';
+    buffer[buffer_pos++] = '[';
+    int related_words_count = stb_arr_len(word->related_words);
+    for (int j = 0; j < related_words_count; ++j)
+    {
+        word_str = strpool_get_string(wordspool.strpool, word->related_words[j]);
+        nw_json_write_string(buffer, buffer_pos, word_str, lt_str_length(word_str));
+        if (j < related_words_count - 1)
+        {
+            buffer[buffer_pos++] = ',';
+            buffer[buffer_pos++] = ' ';
+        }
+    }
+    buffer[buffer_pos++] = ']';
+    buffer[buffer_pos++] = '\n';
+
+    nw_json_write_string(buffer, buffer_pos, NW_KEY_STR_VISITS, lt_str_length(NW_KEY_STR_VISITS));
+    buffer[buffer_pos++] = ' ';
+    buffer[buffer_pos++] = ':';
+    buffer[buffer_pos++] = ' ';
+    nw_json_write_int32(buffer, buffer_pos, word->visits);
+    buffer[buffer_pos++] = '\n';
+    buffer[buffer_pos++] = '\0';
+}
 
 /*============================
     Command Line Loop
@@ -1317,12 +1377,12 @@ size_t nw_calc_json_buffer_size(networdpool_t &wordspool)
     size_t open_brace_line = 5 + 1;
     size_t close_brace_line = 6 + 1;
 
-    int words_len = stb_arr_len(wordspool.words);
+    int words_count = stb_arr_len(wordspool.words);
 
     size_t result = (word_line_size + relatives_line_size + visits_line_size + 
-                      open_brace_line + close_brace_line) * words_len;
+                      open_brace_line + close_brace_line) * words_count;
 
-    for (int i = 0; i < words_len; ++i)
+    for (int i = 0; i < words_count; ++i)
     {
         netword_t *word = wordspool.words + i;
 
@@ -1331,8 +1391,8 @@ size_t nw_calc_json_buffer_size(networdpool_t &wordspool)
         word_length += 2;
         result += word_length;
 
-        int related_words_len = stb_arr_len(word->related_words);
-        for (int j = 0; j < related_words_len; ++j)
+        int related_words_count = stb_arr_len(word->related_words);
+        for (int j = 0; j < related_words_count; ++j)
         {
             strpool_handle_t relative = word->related_words[j];
             int32_t relative_length = 0;
@@ -1469,6 +1529,7 @@ enum nw_cmd_e
     cmd_addr,
     cmd_stat,
     cmd_save,
+    cmd_find,
 	cmd_count,
 };
 
@@ -1478,7 +1539,8 @@ static const char *nw_cmd_strings[nw_cmd_e::cmd_count] = {
     "new",
     "addr",
     "stat",
-    "save"
+    "save",
+    "find"
 };
 
 /**
@@ -1579,6 +1641,11 @@ nw_cmd_e nw_cmdl_get_cmd(const char *cmdline, const nw_cmdl_tokens_t &tokens)
     {
         return nw_cmd_e::cmd_save;
     }
+    else if (nw_cmdstr_length == lt_str_length(nw_cmd_strings[nw_cmd_e::cmd_find]) && 
+             lt_str_ncompare(nw_cmdstr, nw_cmd_strings[nw_cmd_e::cmd_find], nw_cmdstr_length) == 0)
+    {
+        return nw_cmd_e::cmd_find;
+    }
     else
     {
         return nw_cmd_e::cmd_unrecognized;
@@ -1631,7 +1698,16 @@ void nw_cmdl_execute_new(const char *cmdline, const nw_cmdl_tokens_t &tokens, ne
     int arg_i = 1;
     const char *new_word = cmdline + tokens.token_start_positions[arg_i];
     int new_word_length = tokens.token_lengths[arg_i];
-    netword_t *netword = nw_make_word(networdpool, new_word, new_word_length);
+
+    netword_t *netword = 0;
+    netword = nw_search_word(networdpool, new_word, new_word_length, 0);
+    if (netword != 0)
+    {
+        printf("\nError: The word already exists!\n");
+        return;
+    }
+
+    netword = nw_make_word(networdpool, new_word, new_word_length);
     for (int i = arg_i + 1; i < tokens.token_num; ++i)
     {
         new_word = cmdline + tokens.token_start_positions[i];
@@ -1651,7 +1727,7 @@ void nw_cmdl_execute_addr(const char *cmdline, const nw_cmdl_tokens_t &tokens, n
     int argi = 1;
     const char *target_word = cmdline + tokens.token_start_positions[argi];
     int target_word_length = tokens.token_lengths[argi];
-    netword_t *netword = nw_search_word(networdpool, target_word, target_word_length);
+    netword_t *netword = nw_search_word(networdpool, target_word, target_word_length, 0);
     if (netword)
     {
         for (int i = argi + 1; i < tokens.token_num; ++i)
@@ -1664,6 +1740,43 @@ void nw_cmdl_execute_addr(const char *cmdline, const nw_cmdl_tokens_t &tokens, n
     else
     {
         printf("\nError: The target word doesn't exist in the archive yet! Use command \'new\' to add it first.\n");
+    }
+}
+
+void nw_cmdl_execute_find(const char *cmdline, const nw_cmdl_tokens_t &tokens, networdpool_t &wordspool)
+{
+    const int buffer_size = 1024;
+    static char buffer[buffer_size];
+    buffer[buffer_size - 1] = '\0';
+
+    if (tokens.token_num < 2) 
+    {
+        printf("\nError: Not enough arguments following the command \'addr\'!\n");
+        return;
+    }
+
+    int argi = 1;
+    const char *arg_str1 = cmdline + tokens.token_start_positions[argi];
+    int arg_str1_length = tokens.token_lengths[argi];
+    bool has_match = false;
+    netword_t *related_match_list = 0;
+    netword_t *word = nw_search_word(wordspool, arg_str1, arg_str1_length, &related_match_list);
+    if (word != 0)
+    {
+        has_match = true;
+        printf("\nWord match:\n");
+        nw_write_word(word, buffer, buffer_size, wordspool); 
+        printf("%s", buffer);
+    }
+    int related_match_count = stb_arr_len(related_match_list);
+    if (related_match_count)
+    {
+        printf("\nRelated word count: %d\n", related_match_count);
+        has_match = true;
+    }
+    if (!has_match)
+    {
+        printf("\nNo word found!\n");
     }
 }
 
@@ -1699,7 +1812,7 @@ void nw_cmdl_run()
         int32_t strpool_entry_capacity = networdpool_capacity;
         int32_t strpool_hashslot_capacity = strpool_entry_capacity * 2;
 
-        nw_networdpool_init(networdpool, networdpool_capacity, 
+        nw_init(networdpool, networdpool_capacity, 
 							strpool_block_size, strpool_hashslot_capacity, strpool_entry_capacity);
 
         if (nw_json_read(json_buffer, file_read_length, networdpool) != 0)
@@ -1710,7 +1823,7 @@ void nw_cmdl_run()
     else
     {
         printf("No existing networds.json file found.\n\n");
-        nw_networdpool_init(networdpool, 10, 256, 16,10);
+        nw_init(networdpool, 10, 256, 16,10);
     }
 
     nw_cmdl_tokens_t cmdl_tokens;
@@ -1758,6 +1871,12 @@ void nw_cmdl_run()
                 {
                     printf("Saving failed.\n\n");
                 }
+            } break;
+
+            case nw_cmd_e::cmd_find:
+            {
+                nw_cmdl_execute_find(cmdline, cmdl_tokens, networdpool);
+                printf("\n");
             } break;
 
             case nw_cmd_e::cmd_unrecognized:
